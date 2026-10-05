@@ -1,5 +1,43 @@
 # Official verl migration validation — 2026-10-05
 
+## Active-environment FlashAttention ABI repair
+
+The `logs/official_opd.log` run failed inside Qwen3 `from_pretrained` while importing
+`flash_attn_2_cuda`, with an undefined `c10_cuda_check_implementation` symbol.
+The active `sal` environment uses torch 2.10.0+cu128 with CXX11 ABI enabled, but its
+FlashAttention 2.8.3 wheel was built for torch 2.8 with CXX11 ABI disabled.
+This is a native-extension mismatch, before any OPD optimizer step.
+
+For environments outside the official lockfile, rebuild FlashAttention against
+the already-installed training torch after changing torch versions:
+
+```bash
+CUDA_HOME=/path/to/cuda-toolkit PYTHON_BIN=/path/to/training/python \
+  bash scripts/rebuild_flash_attn.sh
+```
+
+The script disables cached binaries and build isolation, preserves installed
+dependencies (`--no-deps`), and checks both regular and variable-length imports.
+It requires a CUDA compiler and existing build dependencies (including torch,
+packaging, ninja and setuptools). `MAX_JOBS` defaults to 8.
+This repair does not establish compatibility of an arbitrary environment with
+every API in the pinned official trainer.
+
+The local repair rebuilt FlashAttention 2.8.3 with CUDA toolkit 12.5, torch
+2.10.0+cu128 and its enabled CXX11 ABI (SM80/SM90 kernels). Only FlashAttention
+was reinstalled; torch, vLLM and other dependencies were preserved. The wheel
+SHA256 is `2f2d7e2a00d4f7821015704a16d7b77fe644d448fd4c854f45f864b9162ed32a`.
+
+GPU checks passed on an RTX 5880 Ada using bfloat16, causal attention and grouped
+query attention: dense and packed variable-length FlashAttention outputs and
+gradients match PyTorch math SDPA within bfloat16 tolerances. A small Qwen3 model
+loaded with `from_pretrained(..., attn_implementation="flash_attention_2")` also
+completed forward/backward with finite loss and gradients. vLLM's native extension
+imports successfully. The diagnostic log is `logs/flash_attention_repair_check.log`
+on the repaired host. The diagnostic process exited and released its GPU.
+These checks repair the reported import failure; a full OPD training run was not
+restarted as part of this environment repair.
+
 ## Readable teacher prompts
 
 All committed Parquet splits now store natural-language `extra_info.teacher_prompt`
