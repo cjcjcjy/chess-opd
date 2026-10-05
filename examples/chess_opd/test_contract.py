@@ -1,14 +1,12 @@
-"""CPU checks for the prompt, output contract, special moves and dense KL."""
+"""CPU checks for the chess prompt, output contract and special moves."""
 import unittest
 
 import chess
-import torch
 
 from examples.chess_opd.preview_top3_prompts import (
     move_facts, student_prompt, teacher_prompt, verified_move_description,
 )
 from examples.chess_opd.evaluate_top3_opd import parse_answer
-from examples.chess_opd.train_top3_opd import full_teacher_kl
 
 FEN = "r1b2rk1/ppp2ppp/2nbpn2/8/PP3P2/2PB1N2/6PP/RNB2R1K b - - 0 11"
 ANSWER = "1. f8d8: Rook to d8.\n2. a7a5: Attacks b4.\n3. f6d5: Attacks c3.\nBest Move: f8d8"
@@ -49,18 +47,6 @@ class ContractTest(unittest.TestCase):
         facts = move_facts(board, chess.Move.from_uci("e1g1"))
         self.assertIsNone(facts["capture"])
         self.assertEqual(verified_move_description(board, facts), "the king moves from e1 to g1")
-
-    def test_dense_kl_direction_and_gradient(self):
-        student = torch.tensor([[1., -1., 0.], [0., 2., -2.]], requires_grad=True)
-        teacher = torch.tensor([[0., 1., -1.], [2., 0., -2.]])
-        loss = full_teacher_kl(student, teacher, torch.ones(2))
-        expected = torch.distributions.kl_divergence(
-            torch.distributions.Categorical(logits=teacher),
-            torch.distributions.Categorical(logits=student)).mean()
-        torch.testing.assert_close(loss, expected)
-        loss.backward()
-        torch.testing.assert_close(student.grad, (student.softmax(-1) - teacher.softmax(-1)) / 2)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,4 @@
-# Install torch separately using the CUDA wheel appropriate for your GPU.
-transformers==5.12.0
-peft==0.18.1
-accelerate==1.9.0
+# Data preparation only. Training dependencies come from official verl's uv.lock.
+transformers>=4.51,<6
 python-chess==1.999
-safetensors>=0.5.3
-huggingface-hub>=1.0,<2
+pyarrow>=19

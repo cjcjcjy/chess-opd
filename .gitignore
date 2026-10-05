@@ -9,3 +9,5 @@ logs/
 *.pt
 *.safetensors
 .env
+vendor/
+.venv-data/
