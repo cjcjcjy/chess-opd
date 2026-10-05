@@ -20,15 +20,20 @@ if [[ $(git -C "$VERL_DIR" rev-parse HEAD) != "$REVISION" ]]; then
 fi
 CONTEXT_PATCH="$ROOT/patches/teacher_prompt.patch"
 THINKING_PATCH="$ROOT/patches/teacher_thinking.patch"
-if git -C "$VERL_DIR" apply --reverse --check "$THINKING_PATCH" 2>/dev/null; then
-  echo "Teacher-context and reasoning patches already applied."
+TEXT_PATCH="$ROOT/patches/teacher_prompt_text.patch"
+if git -C "$VERL_DIR" apply --reverse --check "$TEXT_PATCH" 2>/dev/null; then
+  echo "Teacher-context, reasoning and readable-prompt patches already applied."
 else
-  if ! git -C "$VERL_DIR" apply --reverse --check "$CONTEXT_PATCH" 2>/dev/null; then
-    git -C "$VERL_DIR" apply --check "$CONTEXT_PATCH"
-    git -C "$VERL_DIR" apply "$CONTEXT_PATCH"
+  if ! git -C "$VERL_DIR" apply --reverse --check "$THINKING_PATCH" 2>/dev/null; then
+    if ! git -C "$VERL_DIR" apply --reverse --check "$CONTEXT_PATCH" 2>/dev/null; then
+      git -C "$VERL_DIR" apply --check "$CONTEXT_PATCH"
+      git -C "$VERL_DIR" apply "$CONTEXT_PATCH"
+    fi
+    git -C "$VERL_DIR" apply --check "$THINKING_PATCH"
+    git -C "$VERL_DIR" apply "$THINKING_PATCH"
   fi
-  git -C "$VERL_DIR" apply --check "$THINKING_PATCH"
-  git -C "$VERL_DIR" apply "$THINKING_PATCH"
+  git -C "$VERL_DIR" apply --check "$TEXT_PATCH"
+  git -C "$VERL_DIR" apply "$TEXT_PATCH"
 fi
 if [[ ${1:-} == --checkout-only ]]; then
   exit 0

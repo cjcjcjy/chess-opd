@@ -18,13 +18,13 @@ class OfficialConfigTest(unittest.TestCase):
         upstream = Path(os.environ.get("VERL_DIR", ROOT / "vendor/verl")).resolve()
         if not (upstream / ".git").exists():
             self.skipTest("Run bash scripts/setup_verl.sh --checkout-only")
-        for old_patch_installed in (False, True):
-            with self.subTest(upgrade=old_patch_installed), tempfile.TemporaryDirectory() as directory:
+        for installed_count in (0, 1, 2):
+            with self.subTest(installed_patches=installed_count), tempfile.TemporaryDirectory() as directory:
                 checkout = Path(directory) / "verl"
                 subprocess.run(["git", "clone", "--shared", str(upstream), str(checkout)],
                                check=True, capture_output=True)
-                if old_patch_installed:
-                    subprocess.run(["git", "-C", str(checkout), "apply", str(ROOT / "patches/teacher_prompt.patch")],
+                for patch_name in ("teacher_prompt.patch", "teacher_thinking.patch")[:installed_count]:
+                    subprocess.run(["git", "-C", str(checkout), "apply", str(ROOT / "patches" / patch_name)],
                                    check=True, capture_output=True)
                 env = {**os.environ, "VERL_DIR": str(checkout)}
                 command = ["bash", str(ROOT / "scripts/setup_verl.sh"), "--checkout-only"]

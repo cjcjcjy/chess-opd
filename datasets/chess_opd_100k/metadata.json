@@ -6,24 +6,25 @@
   "student_enable_thinking": false,
   "teacher_enable_thinking": true,
   "prompt_version": "top3-student-nothink-teacher-think-v1",
+  "teacher_prompt_format": "text",
   "splits": {
     "train": {
       "positions": 100000,
       "max_student_prompt_tokens": 906,
       "max_teacher_prompt_tokens": 1032,
-      "sha256": "aa1da3597227e36f957ae23cac5067d03e24dab1e050cd2c6694c84410aed518"
+      "sha256": "776fdf73d2657604da290308c03bc3ab2d1ff0c8e3e6ca81fdba45263239b8d2"
     },
     "dev": {
       "positions": 128,
       "max_student_prompt_tokens": 718,
       "max_teacher_prompt_tokens": 847,
-      "sha256": "1721e023ae023ecb7a2075253e61eddb0bdfbfdb32b5c7bff9a886de218de32d"
+      "sha256": "9c4e3a476a549f354420747b2cc96f57df5653c36d0620ef806d2821292f4f26"
     },
     "test": {
       "positions": 825,
       "max_student_prompt_tokens": 735,
       "max_teacher_prompt_tokens": 866,
-      "sha256": "466d54fde4d36b03bd5c65f1f8c3935e47934051f2d44f30ad97a2f1910f759c"
+      "sha256": "6f0ed1425fc584b474e5f495d6206dc01e1a0cadfdca5eac960de3218b54a177"
     }
   }
 }

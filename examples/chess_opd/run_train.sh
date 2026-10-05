@@ -40,7 +40,7 @@ if [[ $(git -C "$VERL_DIR" rev-parse HEAD) != "$(cat "$ROOT/VERL_REVISION")" ]];
   echo "Run scripts/setup_verl.sh; official verl revision mismatch." >&2
   exit 1
 fi
-git -C "$VERL_DIR" apply --reverse --check "$ROOT/patches/teacher_thinking.patch"
+git -C "$VERL_DIR" apply --reverse --check "$ROOT/patches/teacher_prompt_text.patch"
 PREFLIGHT=(python3)
 if [[ $VERL_USE_UV != 0 ]]; then
   PREFLIGHT=(uv run --frozen --all-packages --extra vllm --extra fsdp python3)

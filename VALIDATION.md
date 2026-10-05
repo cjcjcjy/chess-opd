@@ -1,6 +1,36 @@
 # Official verl migration validation — 2026-10-05
 
-## Teacher reasoning before student-token scoring
+## Readable teacher prompts
+
+All committed Parquet splits now store natural-language `extra_info.teacher_prompt`
+with actual newlines, instead of `teacher_prompt_ids`. The adapter encodes the text
+with the routed teacher's own cached tokenizer and `enable_thinking=True` at runtime.
+Prompt wording, student thinking=False, teacher thinking=True and response-only
+distillation are preserved.
+
+The complete migration comparison checked all 100,953 rows: re-encoding each text
+produces exactly the previous teacher token sequence. All other row fields are
+unchanged. `datasets/chess_opd_100k/text_migration.json` records split counts and
+old/new SHA256 values. The full dataset audit passed with no overlapping FEN keys
+and complete legal-move coverage. `sample.md` in that directory displays a real
+training row's student and teacher prompts.
+
+Sixteen CPU tests pass, including text validation, obsolete-schema rejection,
+per-teacher tokenizer caching/routing, exact response probability alignment,
+thinking failure handling, and setup from clean, context-only and two-patch
+checkouts. Setup remains idempotent. Shell syntax and whitespace checks pass.
+
+The pinned official `RLHFDataset` loaded all 100,000 training rows. First, middle
+and last samples retained the complete teacher text through `collate_fn`, with
+matching token lengths and no private reference in the student's raw prompt.
+The launcher's full-data preflight and dry run also passed on the new artifacts:
+100,000 train and 128 validation positions, 25,000 batches for one epoch.
+
+The earlier inference results below predate this storage-only migration; they
+are retained as historical evidence. No GPU inference or training was run for
+the text migration.
+
+## Earlier teacher reasoning before student-token scoring
 
 The adapter now makes two sequential calls through the official teacher client:
 generate private reasoning through `</think>`, then compute probabilities for the
@@ -20,8 +50,8 @@ Fourteen CPU unittest groups pass. The added cases verify:
 - Clean upstream checkout setup, upgrade from the earlier context-only patch, and
   repeated setup all produce identical patched source files.
 
-The existing 100K data files are unchanged. Teacher reasoning is generated at
-training time; this change does not require regenerating the Parquet dataset.
+At this earlier stage, the 100K data files were unchanged. Teacher reasoning is
+generated at training time; adding reasoning did not require regenerating the dataset.
 
 The local real-Qwen3 smoke at a 4,096-token reasoning limit reached that cap without
 `</think>` and correctly refused scoring. The default thinking budget was increased
@@ -56,7 +86,7 @@ was -0.22425951. The test process exited and released its GPU.
 The full-data launcher dry run passed after this change, still using the existing
 100,000 train / 128 validation rows and 25,000 batches per epoch. It includes the
 new teacher budget of 8,192 and the teacher context length of 15,362. All three
-committed Parquet SHA256 hashes remain unchanged. No training was launched.
+committed Parquet SHA256 hashes were unchanged at that stage. No training was launched.
 
 ## Ready 100K dataset and asymmetric thinking update
 

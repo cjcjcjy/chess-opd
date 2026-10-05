@@ -6,7 +6,7 @@ import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import torch
@@ -40,6 +40,12 @@ class FakeTokenizer:
     pad_token_id = 0
     eos_token_id = 99
 
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, enable_thinking):
+        assert tokenize and add_generation_prompt and enable_thinking
+        assert len(messages) == 1 and messages[0]["role"] == "user"
+        assert messages[0]["content"] == "Private board and Stockfish reference."
+        return getattr(self, "prompt_ids", [100])
+
     def encode(self, text, **kwargs):
         return {"<think>": [10], "</think>": [11], "\n\n": [12]}[text]
 
@@ -56,7 +62,8 @@ class TeacherContextTest(unittest.TestCase):
     def make_worker(self, generated=None, width=1, context_limit=1000, stop_reason="completed"):
         manager = self.manager_class.__new__(self.manager_class)
         manager.teacher_model_configs = {"teacher": SimpleNamespace(
-            inference=SimpleNamespace(max_model_len=context_limit, temperature=1.0))}
+            model_path="teacher-model", inference=SimpleNamespace(max_model_len=context_limit, temperature=1.0))}
+        manager._teacher_tokenizers = {"teacher": FakeTokenizer()}
         manager.distillation_loss_config = SimpleNamespace(
             topk=width, loss_settings=SimpleNamespace(use_topk=width > 1))
         if generated is None:
@@ -81,10 +88,12 @@ class TeacherContextTest(unittest.TestCase):
         response = [17, 18, 19, 99]  # EOS is included in the scored student tokens.
         private = list(range(100, 100 + teacher_length))
         worker, client = self.make_worker(generated=generated, width=width)
+        worker.teacher_server_manager._teacher_tokenizers["teacher"].prompt_ids = private
         output = SimpleNamespace(extra_fields={}, multi_modal_data=None, mm_processor_kwargs=None,
                                  response_mask=[1] * len(response), response_ids=list(response))
         asyncio.run(self.method(worker, output, [5] * student_length, response, False,
-                               {"data_source": "chess_opd", "extra_info": {"teacher_prompt_ids": private}}))
+                               {"data_source": "chess_opd", "extra_info": {
+                                   "teacher_prompt": "Private board and Stockfish reference."}}))
         self.assertEqual(client.generate.await_count, 2)
         thinking, scoring = [call.kwargs for call in client.generate.call_args_list]
         self.assertEqual(thinking["prompt_ids"], private)  # No student answer leaks into reasoning.
@@ -122,7 +131,8 @@ class TeacherContextTest(unittest.TestCase):
                 output = SimpleNamespace(extra_fields={})
                 with self.assertRaises(RuntimeError):
                     asyncio.run(self.method(worker, output, [5], [17, 99], False,
-                        {"data_source": "chess_opd", "extra_info": {"teacher_prompt_ids": [100]}}))
+                        {"data_source": "chess_opd", "extra_info": {
+                            "teacher_prompt": "Private board and Stockfish reference."}}))
                 self.assertEqual(client.generate.await_count, 1)
                 self.assertNotIn("teacher_logprobs", output.extra_fields)
 
@@ -130,8 +140,30 @@ class TeacherContextTest(unittest.TestCase):
         worker, client = self.make_worker(context_limit=100)
         with self.assertRaisesRegex(ValueError, "context too small"):
             asyncio.run(self.method(worker, SimpleNamespace(extra_fields={}), [5], [17, 99], False,
-                {"data_source": "chess_opd", "extra_info": {"teacher_prompt_ids": [100]}}))
+                {"data_source": "chess_opd", "extra_info": {
+                    "teacher_prompt": "Private board and Stockfish reference."}}))
         client.generate.assert_not_called()
+
+    def test_invalid_or_obsolete_private_context_fails(self):
+        for extra in ({"teacher_prompt": " "}, {"teacher_prompt": [100]}, {"teacher_prompt_ids": [100]}):
+            with self.subTest(extra=extra):
+                worker, client = self.make_worker()
+                with self.assertRaises(ValueError):
+                    asyncio.run(self.method(worker, None, [1], [2], False,
+                                           {"data_source": "chess_opd", "extra_info": extra}))
+                client.generate.assert_not_called()
+
+    def test_teacher_tokenizer_is_loaded_once_per_routed_model(self):
+        worker, _ = self.make_worker()
+        manager = worker.teacher_server_manager
+        del manager._teacher_tokenizers
+        manager.teacher_model_configs["second"] = SimpleNamespace(model_path="second-model")
+        teacher, second = FakeTokenizer(), FakeTokenizer()
+        with patch("transformers.AutoTokenizer.from_pretrained", side_effect=[teacher, second]) as loader:
+            self.assertIs(manager.get_teacher_tokenizer("teacher"), teacher)
+            self.assertIs(manager.get_teacher_tokenizer("teacher"), teacher)
+            self.assertIs(manager.get_teacher_tokenizer("second"), second)
+            self.assertEqual([call.args for call in loader.call_args_list], [("teacher-model",), ("second-model",)])
 
     def test_missing_private_context_fails(self):
         worker, client = self.make_worker()

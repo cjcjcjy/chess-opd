@@ -1,0 +1,23 @@
+{
+  "train": {
+    "positions": 100000,
+    "identical_teacher_token_sequences": 100000,
+    "all_other_fields_unchanged": true,
+    "previous_sha256": "aa1da3597227e36f957ae23cac5067d03e24dab1e050cd2c6694c84410aed518",
+    "text_sha256": "776fdf73d2657604da290308c03bc3ab2d1ff0c8e3e6ca81fdba45263239b8d2"
+  },
+  "dev": {
+    "positions": 128,
+    "identical_teacher_token_sequences": 128,
+    "all_other_fields_unchanged": true,
+    "previous_sha256": "1721e023ae023ecb7a2075253e61eddb0bdfbfdb32b5c7bff9a886de218de32d",
+    "text_sha256": "9c4e3a476a549f354420747b2cc96f57df5653c36d0620ef806d2821292f4f26"
+  },
+  "test": {
+    "positions": 825,
+    "identical_teacher_token_sequences": 825,
+    "all_other_fields_unchanged": true,
+    "previous_sha256": "466d54fde4d36b03bd5c65f1f8c3935e47934051f2d44f30ad97a2f1910f759c",
+    "text_sha256": "6f0ed1425fc584b474e5f495d6206dc01e1a0cadfdca5eac960de3218b54a177"
+  }
+}

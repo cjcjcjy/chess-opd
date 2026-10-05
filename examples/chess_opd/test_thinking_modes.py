@@ -25,7 +25,12 @@ class ThinkingModesTest(unittest.TestCase):
         converted = convert_row(row, self.tokenizer, self.tokenizer, 0, 2048, 3072)
         student_ids = encode(self.tokenizer, converted["prompt"], enable_thinking=False)
         student_prefix = self.tokenizer.decode(student_ids, skip_special_tokens=False)
-        teacher_ids = converted["extra_info"]["teacher_prompt_ids"]
+        extra = converted["extra_info"]
+        self.assertNotIn("teacher_prompt_ids", extra)
+        self.assertIsInstance(extra["teacher_prompt"], str)
+        teacher_ids = encode(self.tokenizer, [{"role": "user", "content": extra["teacher_prompt"]}],
+                             enable_thinking=True)
+        self.assertEqual(len(teacher_ids), extra["teacher_prompt_length"])
         teacher_prefix = self.tokenizer.decode(teacher_ids, skip_special_tokens=False)
         self.assertTrue(student_prefix.endswith("<think>\n\n</think>\n\n"))
         self.assertTrue(teacher_prefix.endswith("<|im_start|>assistant\n"))

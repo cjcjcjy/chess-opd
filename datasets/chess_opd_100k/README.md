@@ -22,6 +22,7 @@ Only board positions and engine evaluations were selected, never prior model pro
 `selection.json` records the exact source SHA256, seed 20261005, eligible counts,
 phase quotas and exclusions. `metadata.json` records the Parquet hashes, lengths
 and tokenizer identities. `audit.json` records the completed dataset checks.
+`text_migration.json` records the token-identical migration from stored IDs to text.
 `dev.engine.jsonl` and `test.engine.jsonl` support the standalone chess evaluator;
 they are not extra training rows.
 
@@ -32,12 +33,15 @@ they are not extra training rows.
   cp/mate scores, and immediate occupancy/capture facts computed from the board.
 - Student output: three move explanations and `Best Move: MOVE`.
 - The redundant instruction beginning `Use three distinct legal UCI moves.` is absent.
-- Teacher context is pretokenized into `extra_info.teacher_prompt_ids`. At training
-  time the adapter first generates a teacher reasoning block through `</think>`,
+- Teacher context is readable English in `extra_info.teacher_prompt`, with actual
+  newlines and no chat special tokens or integer arrays. `teacher_prompt_length`
+  records its token count. See [a real training sample](sample.md).
+- At training time the adapter encodes this text with the teacher's own tokenizer
+  and chat template (`enable_thinking=True`), generates reasoning through `</think>`,
   then appends two newlines and the student's raw sampled response token IDs for
   scoring. Reasoning is private context and never becomes a student loss target.
-  The Parquet files do not contain generated reasoning and do not need regeneration
-  for this change.
+  The Parquet files do not contain generated reasoning. All 100,953 rows have been
+  converted to text; re-encoding gives exactly the former teacher token IDs.
 
 The two model tokenizers must match the saved vocabulary/chat-template fingerprints.
 Local model directory names may differ: the launcher checks tokenizer content, not

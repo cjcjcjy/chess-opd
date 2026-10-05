@@ -17,6 +17,7 @@ def main():
     metadata = json.loads((args.directory / "metadata.json").read_text())
     assert metadata["student_enable_thinking"] is False
     assert metadata["teacher_enable_thinking"] is True
+    assert metadata["teacher_prompt_format"] == "text"
     seen, splits, phases = set(), {}, Counter()
     for split in ("train", "dev", "test"):
         path = args.directory / f"{split}.parquet"
@@ -44,10 +45,12 @@ def main():
                 assert "stockfish engine:" not in content
                 assert "Use three distinct legal UCI moves." not in content
                 assert content.endswith("Best Move: MOVE")
-                assert extra["teacher_prompt_ids"]
-                assert all(isinstance(token, int) and token >= 0 for token in extra["teacher_prompt_ids"])
+                assert "teacher_prompt_ids" not in extra
+                assert isinstance(extra["teacher_prompt"], str) and extra["teacher_prompt"].strip()
+                assert "stockfish engine:" in extra["teacher_prompt"]
+                assert isinstance(extra["teacher_prompt_length"], int) and extra["teacher_prompt_length"] > 0
                 max_student = max(max_student, extra["student_prompt_length"])
-                max_teacher = max(max_teacher, len(extra["teacher_prompt_ids"]))
+                max_teacher = max(max_teacher, extra["teacher_prompt_length"])
                 if split == "train":
                     phases[extra["phase"]] += 1
                 count += 1
@@ -64,6 +67,7 @@ def main():
               "duplicate_or_overlapping_fens": 0, "legal_move_coverage": "passed for every row",
               "student_private_reference_leaks": 0, "removed_instruction_occurrences": 0,
               "student_enable_thinking": False, "teacher_enable_thinking": True,
+              "teacher_prompt_format": "text",
               "default_batch_size": 4, "training_batches_per_epoch": 25000}
     if args.output:
         args.output.write_text(json.dumps(report, indent=2) + "\n")

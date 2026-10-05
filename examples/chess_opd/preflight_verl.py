@@ -34,6 +34,8 @@ def main():
         metadata = json.loads((path.parent / "metadata.json").read_text())
         if metadata.get("student_enable_thinking") is not False or metadata.get("teacher_enable_thinking") is not True:
             parser.error("Expected student thinking=False and teacher thinking=True; regenerate old parquet")
+        if metadata.get("teacher_prompt_format") != "text":
+            parser.error("Expected readable teacher_prompt text; regenerate old parquet")
         expected = metadata["splits"].get(path.stem)
         if expected is None:
             parser.error(f"No manifest entry for {path.name}")
@@ -55,9 +57,17 @@ def main():
                 if row["data_source"] != "chess_opd":
                     parser.error("Expected chess_opd data_source")
                 extra = row["extra_info"]
-                ids = extra.get("teacher_prompt_ids", [])
+                text = extra.get("teacher_prompt")
+                if not isinstance(text, str) or not text.strip() or "teacher_prompt_ids" in extra:
+                    parser.error("Expected private teacher_prompt text, not stored token IDs")
+                ids = teacher.apply_chat_template([{"role": "user", "content": text}], tokenize=True,
+                    add_generation_prompt=True, enable_thinking=True)
+                if hasattr(ids, "keys"):
+                    ids = ids["input_ids"]
                 if not ids or len(ids) > args.max_teacher_prompt:
                     parser.error("Missing/overlong private teacher prompt; regenerate data or increase its limit")
+                if len(ids) != extra.get("teacher_prompt_length"):
+                    parser.error("Teacher prompt token count differs from saved metadata")
                 key = " ".join(extra["fen"].split()[:4])
                 if key in seen:
                     parser.error("Duplicate FEN within or across train/val")
@@ -69,8 +79,7 @@ def main():
                     prompt_ids = prompt_ids["input_ids"]
                 if len(prompt_ids) > args.max_prompt:
                     parser.error("Student prompt exceeds configured limit")
-                # Inspect teacher context; the fingerprint above validates its tokenizer/template.
-                text = teacher.decode(ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                # The readable text is encoded with the teacher's own chat template above.
                 if "The best three moves and their scores provided by stockfish engine:" not in text:
                     parser.error("Teacher context does not contain the expected Stockfish reference")
                 if "stockfish engine:" in row["prompt"][0]["content"]:

@@ -1,0 +1,75 @@
+diff --git a/verl/experimental/agent_loop/agent_loop.py b/verl/experimental/agent_loop/agent_loop.py
+--- a/verl/experimental/agent_loop/agent_loop.py
++++ b/verl/experimental/agent_loop/agent_loop.py
+@@ -1062,22 +1062,30 @@
+                     # Non-tensor batch values arrive as 0-d numpy objects / arrays; normalize to Python.
+                     routing_key = routing_value.item() if hasattr(routing_value, "item") else routing_value
+             # chess-opd: only the teacher gets the private Stockfish context.
++            teacher_prompt = None
+             teacher_prompt_ids = None
+             if sample_kwargs is not None:
+                 extra_info = sample_kwargs.get("extra_info", {})
+-                teacher_prompt_ids = extra_info.get("teacher_prompt_ids")
+-            if teacher_prompt_ids is not None:
+-                teacher_prompt_ids = [int(token) for token in teacher_prompt_ids]
+-                if not teacher_prompt_ids:
+-                    raise ValueError("teacher_prompt_ids must not be empty")
++                teacher_prompt = extra_info.get("teacher_prompt")
++                if "teacher_prompt_ids" in extra_info:
++                    raise ValueError("Stored teacher_prompt_ids are obsolete; regenerate data with teacher_prompt text")
++            if teacher_prompt is not None:
++                if not isinstance(teacher_prompt, str) or not teacher_prompt.strip():
++                    raise ValueError("teacher_prompt must be nonempty text")
++                teacher_tokenizer = self.teacher_server_manager.get_teacher_tokenizer(routing_key)
++                encoded = teacher_tokenizer.apply_chat_template(
++                    [{"role": "user", "content": teacher_prompt}],
++                    tokenize=True, add_generation_prompt=True, enable_thinking=True,
++                )
++                teacher_prompt_ids = list(encoded["input_ids"] if hasattr(encoded, "keys") else encoded)
+             elif routing_key == "chess_opd":
+-                raise ValueError("chess_opd requires private teacher_prompt_ids in extra_info")
++                raise ValueError("chess_opd requires private teacher_prompt text in extra_info")
+             scoring_prompt_ids = teacher_prompt_ids if teacher_prompt_ids is not None else prompt_ids
+             if teacher_prompt_ids is not None:
+                 thinking_config = self.config.get("chess_opd", {})
+                 scoring_prompt_ids, thinking_tokens = await self.teacher_server_manager.generate_thinking_prefix(
+                     prompt_ids=teacher_prompt_ids,
+-                    tokenizer=self.tokenizer,
++                    tokenizer=teacher_tokenizer,
+                     response_length=len(response_ids),
+                     max_tokens=int(thinking_config.get("teacher_think_max_tokens", 8192)),
+                     routing_key=routing_key,
+diff --git a/verl/experimental/teacher_loop/teacher_manager.py b/verl/experimental/teacher_loop/teacher_manager.py
+--- a/verl/experimental/teacher_loop/teacher_manager.py
++++ b/verl/experimental/teacher_loop/teacher_manager.py
+@@ -112,6 +112,19 @@
+                 f"Configured teachers: {sorted(self.teacher_model_configs)}."
+             )
+         return routing_key
++
++    def get_teacher_tokenizer(self, routing_key: Optional[str] = None):
++        """Cache the routed teacher's tokenizer for readable private prompts."""
++        from transformers import AutoTokenizer
++
++        teacher_key = self._resolve_teacher_key(routing_key)
++        if not hasattr(self, "_teacher_tokenizers"):
++            self._teacher_tokenizers = {}
++        if teacher_key not in self._teacher_tokenizers:
++            self._teacher_tokenizers[teacher_key] = AutoTokenizer.from_pretrained(
++                self.teacher_model_configs[teacher_key].model_path,
++            )
++        return self._teacher_tokenizers[teacher_key]
+ 
+     async def compute_teacher_logprobs_single(
+         self,
+@@ -154,8 +167,8 @@
+         """Generate private Qwen3 reasoning, stopping before the final answer.
+ 
+         The caller appends the *student's* raw response to this returned prefix.
+-        No student response is sent to this generation request. Token maps are
+-        checked by chess-opd preflight, so the worker tokenizer is safe here.
++        No student response is sent to this generation request. The tokenizer is
++        the teacher's own; shared token maps are checked by chess-opd preflight.
+         """
+         if max_tokens <= 0 or response_length <= 0:
+             raise ValueError("Teacher thinking budget and student response length must be positive")

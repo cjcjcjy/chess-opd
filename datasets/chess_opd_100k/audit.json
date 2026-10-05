@@ -2,22 +2,22 @@
   "splits": {
     "train": {
       "positions": 100000,
-      "file_bytes": 37506259,
-      "sha256": "aa1da3597227e36f957ae23cac5067d03e24dab1e050cd2c6694c84410aed518",
+      "file_bytes": 41634484,
+      "sha256": "776fdf73d2657604da290308c03bc3ab2d1ff0c8e3e6ca81fdba45263239b8d2",
       "max_student_prompt_tokens": 906,
       "max_teacher_prompt_tokens": 1032
     },
     "dev": {
       "positions": 128,
-      "file_bytes": 57471,
-      "sha256": "1721e023ae023ecb7a2075253e61eddb0bdfbfdb32b5c7bff9a886de218de32d",
+      "file_bytes": 66265,
+      "sha256": "9c4e3a476a549f354420747b2cc96f57df5653c36d0620ef806d2821292f4f26",
       "max_student_prompt_tokens": 718,
       "max_teacher_prompt_tokens": 847
     },
     "test": {
       "positions": 825,
-      "file_bytes": 320821,
-      "sha256": "466d54fde4d36b03bd5c65f1f8c3935e47934051f2d44f30ad97a2f1910f759c",
+      "file_bytes": 360418,
+      "sha256": "6f0ed1425fc584b474e5f495d6206dc01e1a0cadfdca5eac960de3218b54a177",
       "max_student_prompt_tokens": 735,
       "max_teacher_prompt_tokens": 866
     }
@@ -34,6 +34,7 @@
   "removed_instruction_occurrences": 0,
   "student_enable_thinking": false,
   "teacher_enable_thinking": true,
+  "teacher_prompt_format": "text",
   "default_batch_size": 4,
   "training_batches_per_epoch": 25000
 }

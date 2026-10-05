@@ -22,7 +22,8 @@ teacher 打分输入: teacher prompt + <think>教师思考</think> + 两个换�
 - 官方负责 Ray 资源池、vLLM 学生采样和教师打分、FSDP 训练、蒸馏损失、optimizer 和 checkpoint。
 - 本仓库负责棋类 prompt、数据转换、验证指标和启动参数。
 - 官方默认让教师读取学生同一个 prompt。[输入适配补丁](patches/teacher_prompt.patch) 加入私有 prompt；随后应用 [教师思考补丁](patches/teacher_thinking.patch)，通过官方 teacher client 先生成思考，再调用原有概率接口。返回概率去掉 teacher prompt 和 thinking，映射回学生序列坐标。学生响应 token 不解码重编码、不增删、不位移；prompt 区域由官方 response mask 排除。
-- 两个补丁只适配教师上下文和请求，不重写训练循环或损失。缺少私有 prompt、思考为空/被截断/未闭合、上下文预算不足时，该样本报错且不调用打分。官方 rollout 层处理失败状态；请检查 worker 日志，不能把失败样本当成完成监督。
+- [文本输入补丁](patches/teacher_prompt_text.patch) 让数据直接保存英文 `teacher_prompt`，训练时使用对应教师模型的 tokenizer 和 `enable_thinking=True` 编码；tokenizer 按教师缓存。
+- 三个补丁只适配教师上下文和请求，不重写训练循环或损失。缺少私有 prompt、思考为空/被截断/未闭合、上下文预算不足时，该样本报错且不调用打分。官方 rollout 层处理失败状态；请检查 worker 日志，不能把失败样本当成完成监督。
 
 默认遵循官方示例的 **`k1 + use_policy_gradient=True`**，不是历史手写版的完整词表 forward KL。所有学生采样 response token（包括生成的 EOS）进入官方 response mask，不做走法/解释差异加权。官方示例的损失裁剪设置保留。默认 `use_task_rewards=False`，棋类 reward 不进入训练目标。
 
@@ -57,7 +58,7 @@ python -m pip install uv
 bash scripts/setup_verl.sh
 ```
 
-官方 checkout 默认位于 `vendor/verl`，不会提交到本仓库。脚本拒绝覆盖已有非 Git 目录或切换不同版本的 checkout，重复执行不会重复打补丁。已有上一版输入补丁的 checkout 也会自动补上教师思考改动。更新本仓库后运行 `bash scripts/setup_verl.sh --checkout-only` 即可更新补丁而不重装环境。`VERL_DIR` 可指定其他独立目录。
+官方 checkout 默认位于 `vendor/verl`，不会提交到本仓库。脚本拒绝覆盖已有非 Git 目录或切换不同版本的 checkout，重复执行不会重复打补丁。已有旧版补丁的 checkout 会自动补上教师思考和文本输入改动。更新本仓库后运行 `bash scripts/setup_verl.sh --checkout-only` 即可更新补丁而不重装环境。`VERL_DIR` 可指定其他独立目录。
 
 仓库私有，对方需要 GitHub 访问权限。
 
@@ -100,11 +101,22 @@ python -m examples.chess_opd.prepare_verl_data \
 |---|---|
 | `prompt` | 仅学生 user message |
 | `data_source` | `chess_opd` |
-| `extra_info.teacher_prompt_ids` | 用教师 chat template 编码的私有 prompt |
+| `extra_info.teacher_prompt` | 完整英文教师 user prompt，含棋盘、引擎信息和真实换行 |
+| `extra_info.teacher_prompt_length` | 教师模板编码后的 token 数，仅用于检查长度 |
 | `extra_info.fen` / `index` | 棋盘与样本标识 |
 | `reward_model.ground_truth` | 验证用合法走法/前三名，不进入学生 prompt |
 
-转换时校验学生/教师词表和特殊 token 映射一致，检查全部合法走法覆盖、跨 split 重复和长度。保存 tokenizer/chat template 指纹；启动时校验文件 SHA256、行数和指纹。student 编码为 thinking=False，`teacher_prompt_ids` 包含 thinking=True 的 generation prefix。历史两者均开启 thinking 的 parquet 会被拒绝。
+转换时校验学生/教师词表和特殊 token 映射一致，检查全部合法走法覆盖、跨 split 重复和长度。保存 tokenizer/chat template 指纹；启动时校验文件 SHA256、行数和指纹。student 编码为 thinking=False；teacher 的自然语言文本在训练时以 thinking=True 编码。数据不保存教师 token ID 数组或生成的思考。旧版存储 token ID 的 parquet 会被拒绝，仓库中的 100K 数据已转换好。
+
+查看 [一条真实数据的完整 prompt](datasets/chess_opd_100k/sample.md)，或直接打印 Parquet 中的教师文本（`print` 会显示实际换行）：
+
+```bash
+python - <<'PY'
+import pyarrow.parquet as pq
+row = next(pq.ParquetFile('datasets/chess_opd_100k/train.parquet').iter_batches(batch_size=1)).to_pylist()[0]
+print(row['extra_info']['teacher_prompt'])
+PY
+```
 
 正式数据可从有权使用的 PGN 按对局划分导出十万级局面，再标注、转换：
 

@@ -16,6 +16,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from examples.chess_opd.test_official_adapter import load_patched_methods
+from examples.chess_opd.prepare_verl_data import encode
 
 
 def main():
@@ -33,6 +34,8 @@ def main():
     teacher_tokenizer = AutoTokenizer.from_pretrained(args.teacher, local_files_only=True)
     assert tokenizer.get_vocab() == teacher_tokenizer.get_vocab()
     assert tokenizer.special_tokens_map == teacher_tokenizer.special_tokens_map
+    teacher_prompt_ids = encode(teacher_tokenizer,
+        [{"role": "user", "content": row["extra_info"]["teacher_prompt"]}], enable_thinking=True)
     device = "cuda:0"
 
     def load(path):
@@ -61,7 +64,7 @@ def main():
         inputs = torch.tensor([prompt_ids], device=device)
         if "prompt_logprobs" not in sampling_params:
             observed.append("thinking")
-            assert prompt_ids == row["extra_info"]["teacher_prompt_ids"]
+            assert prompt_ids == teacher_prompt_ids
             with torch.no_grad():
                 generated = teacher.generate(
                     input_ids=inputs, attention_mask=torch.ones_like(inputs),
@@ -87,9 +90,10 @@ def main():
 
     method, manager_class = load_patched_methods()
     manager = manager_class.__new__(manager_class)
-    context = len(row["extra_info"]["teacher_prompt_ids"]) + args.thinking_tokens + len(response) + 2
+    context = len(teacher_prompt_ids) + args.thinking_tokens + len(response) + 2
     manager.teacher_model_configs = {"teacher": SimpleNamespace(
-        inference=SimpleNamespace(max_model_len=context, temperature=1.0))}
+        model_path=str(args.teacher), inference=SimpleNamespace(max_model_len=context, temperature=1.0))}
+    manager._teacher_tokenizers = {"teacher": teacher_tokenizer}
     manager.distillation_loss_config = SimpleNamespace(topk=0, loss_settings=SimpleNamespace(use_topk=False))
     manager.teacher_client = {"teacher": SimpleNamespace(generate=client_generate)}
     worker = SimpleNamespace(distillation_enabled=True, teacher_key="data_source", tokenizer=tokenizer,

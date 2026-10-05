@@ -42,7 +42,8 @@ def convert_row(row, student, teacher, index, max_prompt_length, max_teacher_pro
         "extra_info": {
             "index": index, "source_index": row.get("source_index", index), "fen": row["fen"],
             "phase": row.get("phase", "unknown"),
-            "teacher_prompt_ids": teacher_ids, "student_prompt_length": len(student_ids),
+            "teacher_prompt": teacher_messages[0]["content"],
+            "teacher_prompt_length": len(teacher_ids), "student_prompt_length": len(student_ids),
         },
     }
 
@@ -82,7 +83,7 @@ def main():
                     converted = convert_row(row, student, teacher, index,
                                             args.max_prompt_length, args.max_teacher_prompt_length)
                     max_student = max(max_student, converted["extra_info"]["student_prompt_length"])
-                    max_teacher = max(max_teacher, len(converted["extra_info"]["teacher_prompt_ids"]))
+                    max_teacher = max(max_teacher, converted["extra_info"]["teacher_prompt_length"])
                     pending.append(converted)
                     count += 1
                     if count % 10000 == 0:
@@ -114,7 +115,8 @@ def main():
                 "student_tokenizer_sha256": tokenizer_fingerprint(student),
                 "teacher_tokenizer_sha256": tokenizer_fingerprint(teacher),
                 "student_enable_thinking": False, "teacher_enable_thinking": True,
-                "prompt_version": "top3-student-nothink-teacher-think-v1", "splits": stats}
+                "prompt_version": "top3-student-nothink-teacher-think-v1",
+                "teacher_prompt_format": "text", "splits": stats}
     (args.output_dir / "metadata.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest, indent=2))
 
