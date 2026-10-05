@@ -45,9 +45,11 @@ teacher 打分输入: teacher prompt + <think>教师思考</think> + 两个换�
 
 ## 环境
 
+训练入口默认使用当前环境的 `python3`，直接进入官方 trainer，不调用 `uv` 或运行全量数据预检查。需要锁定环境时设置 `VERL_USE_UV=1`；需要启动前数据检查时设置 `RUN_PREFLIGHT=1`。`--dry-run` 仍会检查数据。跳过环境管理不代表当前依赖已经兼容。
+
 **不要复用历史手写版的 torch 2.8 / vLLM 0.11 环境运行本版。** 固定上游的 `uv.lock` 使用 torch 2.13.0、vLLM 0.29.0、Transformers 5.12.1、CUDA 13.0。需要支持 CUDA 13 的驱动（通常 Linux 580+）和 Python 3.10–3.12；以官方依赖与 NVIDIA 兼容性要求为准。数据准备可以在单独的 CPU 环境完成。
 
-默认单机两张可见 GPU：一张给学生 actor/rollout，一张给教师。原始示例默认全参数 FSDP，启动脚本也默认 `LORA_RANK=0`，不是之前手写版的 LoRA 训练。支持用 `LORA_RANK=8` 选择官方 LoRA 配置。新版两卡训练的实际显存峰值尚未实测；两张 48 GiB 是目标环境，不是已经验证的显存保证。
+默认单机两张可见 GPU：一张给学生 actor/rollout，一张给教师。学生使用官方 FSDP + LoRA，默认 `LORA_RANK=8`、`LORA_ALPHA=16`、`LORA_TARGET_MODULES=all-linear`；基座权重冻结，只训练 adapter，教师保持冻结推理。可设置 `LORA_RANK=0` 使用全参数训练。LoRA 减少学生的梯度和 optimizer 显存，不降低独立教师服务的打分显存；日志中的教师 OOM 仍需通过教师推理参数处理。
 
 ```bash
 git clone https://github.com/cjcjcjy/chess-opd.git
@@ -164,14 +166,32 @@ CUDA_VISIBLE_DEVICES=0,1 OUTPUT_DIR=runs/official_smoke bash examples/chess_opd/
 mkdir -p logs
 CUDA_VISIBLE_DEVICES=0,1 \
   STUDENT_MODEL=models/Qwen3-4B TEACHER_MODEL=models/Qwen3-8B \
-  OUTPUT_DIR=runs/official_opd_100k_teacher_reasoning \
+  LORA_RANK=8 LORA_ALPHA=16 \
+  OUTPUT_DIR=runs/official_opd_100k_teacher_reasoning_lora8 \
   nohup bash examples/chess_opd/run_train.sh > logs/official_opd.log 2>&1 < /dev/null &
 echo $! > logs/official_opd.pid
 ```
 
-模型目录可设置 `STUDENT_MODEL` / `TEACHER_MODEL`。脚本默认通过官方 `uv run --frozen --all-packages --extra vllm --extra fsdp` 启动 driver 和 Ray worker，避免跑到本机旧 verl。仅在手工准备了兼容的官方环境时使用 `VERL_USE_UV=0`。
+模型目录可设置 `STUDENT_MODEL` / `TEACHER_MODEL`。脚本默认使用当前环境的 `python3`；设置 `VERL_USE_UV=1` 时，通过官方 `uv run --frozen --all-packages --extra vllm --extra fsdp` 启动 driver 和 Ray worker。`RUN_PREFLIGHT=1` 启用全量数据预检查，`--dry-run` 始终检查数据。
 
-官方 checkpoint 位于 `OUTPUT_DIR/global_step_N`。相同配置、数据和输出目录下再次运行时，官方 `trainer.resume_mode=auto` 恢复；显式路径可加 `trainer.resume_mode=resume_path trainer.resume_from_path=/absolute/path/global_step_N`。本次默认输出目录已更换，避免自动恢复到未生成教师思考的旧训练。不要加载历史手写版 checkpoint。
+### LoRA 环境检查
+
+用训练所用的 Python 运行下面的 CPU 检查。它会在一个小型 Qwen3 上执行真实的 PEFT LoRA 初始化、前向和反向计算，并检查仅 adapter 获得梯度，不下载模型或占用 GPU：
+
+```bash
+python -m examples.chess_opd.check_lora_environment
+```
+
+若在 `peft → awq` 导入过程中出现 `cannot import name 'PytorchGELUTanh'`，原因是可选的 `autoawq` 与 Transformers 不兼容。此项目使用的 Qwen3-4B/8B 原始权重不需要 AWQ；在训练环境中移除该可选包，再运行上述检查：
+
+```bash
+python -m pip uninstall -y autoawq
+python -m examples.chess_opd.check_lora_environment
+```
+
+这解决 LoRA 初始化依赖错误，不代表已验证完整 Ray/vLLM/FSDP 训练。教师推理显存独立于学生 LoRA：当前教师 `max_num_batched_tokens=4096`，`TEACHER_GPU_MEM_UTIL` 默认为 `0.8`，实际运行仍需验证教师打分是否有足够显存。
+
+官方 checkpoint 位于 `OUTPUT_DIR/global_step_N`。相同配置、数据和输出目录下再次运行时，官方 `trainer.resume_mode=auto` 恢复；显式路径可加 `trainer.resume_mode=resume_path trainer.resume_from_path=/absolute/path/global_step_N`。默认输出目录为 `runs/official_opd_100k_teacher_reasoning_lora8`，避免自动恢复旧的全参数训练；切换 rank、alpha 或 target modules 时也应使用新目录。不要加载历史手写版 checkpoint。
 
 默认只记录 console，`SAVE_FREQ=250`，`TEST_FREQ=-1` 关闭周期验证；设置 `TEST_FREQ=250` 可启用官方验证。关注官方 distillation loss、生成长度、截断和留出集指标，不能单凭 KL 下降断言学生进步。
 

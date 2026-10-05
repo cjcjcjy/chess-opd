@@ -59,6 +59,8 @@ else:
                    "STUDENT_MODEL": str(temp / "student"), "TEACHER_MODEL": str(temp / "teacher"),
                    "TRAIN_DATA": str(temp / "train.parquet"), "VAL_DATA": str(temp / "dev.parquet"),
                    "OUTPUT_DIR": str(temp / "output")}
+            for key in ("LORA_RANK", "LORA_ALPHA", "LORA_TARGET_MODULES"):
+                env.pop(key, None)
             subprocess.run(["bash", str(ROOT / "examples/chess_opd/run_train.sh")],
                            env=env, cwd=ROOT, check=True, capture_output=True, text=True)
             overrides = json.loads(capture.read_text())
@@ -79,6 +81,10 @@ else:
             self.assertEqual(resolved["distillation"]["teacher_models"]["teacher_model"]["inference"]["max_model_len"],
                              3072 + 8192 + 4096 + 2)
             self.assertEqual(resolved["actor_rollout_ref"]["actor"]["loss_agg_mode"], "token-mean")
+            model = resolved["actor_rollout_ref"]["model"]
+            self.assertEqual(model["lora_rank"], 8)
+            self.assertEqual(model["lora_alpha"], 16)
+            self.assertEqual(model["target_modules"], "all-linear")
             (temp / "resolved.json").write_text(json.dumps(resolved, indent=2))
 
 

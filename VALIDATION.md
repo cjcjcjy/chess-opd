@@ -1,5 +1,28 @@
 # Official verl migration validation — 2026-10-05
 
+## LoRA defaults and AutoAWQ import repair
+
+The student launcher now defaults to the official FSDP LoRA path: rank 8,
+alpha 16, all-linear targets. Teacher weights remain frozen. The default output
+directory includes the LoRA rank to avoid resuming the earlier full-parameter run.
+The current launcher also retains the local ambient-Python/optional-preflight
+settings and teacher prefill token cap of 4,096.
+
+The failed LoRA run stopped during PEFT initialization because AutoAWQ 0.2.9
+imported `PytorchGELUTanh`, which is absent in Transformers 4.57.6. Both local
+Qwen3 checkpoints have no quantization configuration. Removing the unused
+`autoawq` package from the `sal` environment fixes that import path without
+changing torch, Transformers or PEFT.
+
+`python -m examples.chess_opd.check_lora_environment` passed in that environment
+(torch 2.10.0, Transformers 4.57.6, PEFT 0.18.1), using a tiny CPU Qwen3 model
+with real PEFT adapters. Loss and adapter gradients were finite, some adapter
+gradients were nonzero, and all frozen base parameters had no gradient.
+This is not a complete distributed training or teacher-memory check.
+All 16 CPU unit tests passed, including official Hydra composition with the
+LoRA defaults, teacher scoring alignment and patch installation/upgrade checks.
+No full training run was started for this repair.
+
 ## Active-environment FlashAttention ABI repair
 
 The `logs/official_opd.log` run failed inside Qwen3 `from_pretrained` while importing
