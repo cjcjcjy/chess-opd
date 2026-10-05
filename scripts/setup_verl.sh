@@ -18,12 +18,17 @@ if [[ $(git -C "$VERL_DIR" rev-parse HEAD) != "$REVISION" ]]; then
   echo "VERL_DIR must point to the revision in VERL_REVISION; use a fresh directory." >&2
   exit 1
 fi
-PATCH="$ROOT/patches/teacher_prompt.patch"
-if git -C "$VERL_DIR" apply --reverse --check "$PATCH" 2>/dev/null; then
-  echo "Teacher-context patch already applied."
+CONTEXT_PATCH="$ROOT/patches/teacher_prompt.patch"
+THINKING_PATCH="$ROOT/patches/teacher_thinking.patch"
+if git -C "$VERL_DIR" apply --reverse --check "$THINKING_PATCH" 2>/dev/null; then
+  echo "Teacher-context and reasoning patches already applied."
 else
-  git -C "$VERL_DIR" apply --check "$PATCH"
-  git -C "$VERL_DIR" apply "$PATCH"
+  if ! git -C "$VERL_DIR" apply --reverse --check "$CONTEXT_PATCH" 2>/dev/null; then
+    git -C "$VERL_DIR" apply --check "$CONTEXT_PATCH"
+    git -C "$VERL_DIR" apply "$CONTEXT_PATCH"
+  fi
+  git -C "$VERL_DIR" apply --check "$THINKING_PATCH"
+  git -C "$VERL_DIR" apply "$THINKING_PATCH"
 fi
 if [[ ${1:-} == --checkout-only ]]; then
   exit 0

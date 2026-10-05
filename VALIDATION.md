@@ -1,5 +1,63 @@
 # Official verl migration validation — 2026-10-05
 
+## Teacher reasoning before student-token scoring
+
+The adapter now makes two sequential calls through the official teacher client:
+generate private reasoning through `</think>`, then compute probabilities for the
+same student's answer conditioned on that reasoning. Student tokens, response mask
+and EOS are preserved; teacher prefix and reasoning positions are excluded.
+
+Fourteen CPU unittest groups pass. The added cases verify:
+
+- The reasoning request receives only the private teacher prompt, with a token
+  stop on `</think>`; scoring happens afterward on prompt + thinking + student tokens.
+- Single-token and top-k logprobs align with the student even when prefix lengths differ.
+- Any teacher answer after the closing tag is excluded; only student tokens are scored.
+- Missing close tags, EOS before closing, malformed/nested/empty thinking, aborted
+  requests and insufficient context never proceed to student scoring.
+- Validation skips the teacher; non-chess paths retain their previous behavior.
+- Exact official Hydra arguments include the reasoning budget and expanded context.
+- Clean upstream checkout setup, upgrade from the earlier context-only patch, and
+  repeated setup all produce identical patched source files.
+
+The existing 100K data files are unchanged. Teacher reasoning is generated at
+training time; this change does not require regenerating the Parquet dataset.
+
+The local real-Qwen3 smoke at a 4,096-token reasoning limit reached that cap without
+`</think>` and correctly refused scoring. The default thinking budget was increased
+to 8,192; this is a configurable ceiling, not a guarantee of completion on every
+position. The teacher service context length now reserves room for both the entire
+reasoning budget and the student response (15,362 tokens by default).
+
+`smoke_teacher_reasoning.py` is an inference-only test using a Transformers client
+adapter to invoke the actual patched official method bodies. It performs no loss,
+gradient update or checkpoint writing. Example (existing local model paths):
+
+```bash
+CUDA_VISIBLE_DEVICES=2 python -m examples.chess_opd.smoke_teacher_reasoning \
+  --student /path/to/Qwen3-4B --teacher /path/to/Qwen3-8B \
+  --thinking-tokens 8192 --output runs/teacher_reasoning_smoke.json
+```
+
+This diagnostic requires torch, transformers, pyarrow and the applied patches.
+It does not validate the official Ray/vLLM/FSDP deployment or GPU memory requirements
+of concurrent two-model training.
+
+The real Qwen3-4B / Qwen3-8B inference check passed with the 8,192-token reasoning
+budget on one 48 GiB RTX 5880 Ada (models loaded sequentially). On dev source index
+370239, the teacher generated 5,309 reasoning tokens through the closing tag; its
+scoring prefix was 6,033 tokens. The next call scored exactly the student's 256
+sampled tokens with finite probabilities. The student hit the deliberately short
+256-token smoke cap without EOS, so this is a generation/scoring alignment check,
+not a successful final-answer or explanation-quality benchmark. EOS inclusion is
+covered by the CPU tests. The mean teacher log probability of these student tokens
+was -0.22425951. The test process exited and released its GPU.
+
+The full-data launcher dry run passed after this change, still using the existing
+100,000 train / 128 validation rows and 25,000 batches per epoch. It includes the
+new teacher budget of 8,192 and the teacher context length of 15,362. All three
+committed Parquet SHA256 hashes remain unchanged. No training was launched.
+
 ## Ready 100K dataset and asymmetric thinking update
 
 Student chat templates now use `enable_thinking=False`, while serialized teacher

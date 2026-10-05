@@ -1,0 +1,112 @@
+--- a/verl/experimental/agent_loop/agent_loop.py
++++ b/verl/experimental/agent_loop/agent_loop.py
+@@ -1073,6 +1073,17 @@
+             elif routing_key == "chess_opd":
+                 raise ValueError("chess_opd requires private teacher_prompt_ids in extra_info")
+             scoring_prompt_ids = teacher_prompt_ids if teacher_prompt_ids is not None else prompt_ids
++            if teacher_prompt_ids is not None:
++                thinking_config = self.config.get("chess_opd", {})
++                scoring_prompt_ids, thinking_tokens = await self.teacher_server_manager.generate_thinking_prefix(
++                    prompt_ids=teacher_prompt_ids,
++                    tokenizer=self.tokenizer,
++                    response_length=len(response_ids),
++                    max_tokens=int(thinking_config.get("teacher_think_max_tokens", 8192)),
++                    routing_key=routing_key,
++                )
++                output.extra_fields["teacher_thinking_tokens"] = thinking_tokens
++                output.extra_fields["teacher_scoring_prompt_tokens"] = len(scoring_prompt_ids)
+             teacher_ids, teacher_logprobs = await self.teacher_server_manager.compute_teacher_logprobs_single(
+                 sequence_ids=scoring_prompt_ids + response_ids,
+                 multi_modal_data=output.multi_modal_data,
+@@ -1081,18 +1092,18 @@
+                 routing_key=routing_key,
+             )
+             if teacher_prompt_ids is not None:
+-                expected = len(teacher_prompt_ids) + len(response_ids)
++                expected = len(scoring_prompt_ids) + len(response_ids)
+                 if teacher_ids.shape[0] != expected or teacher_logprobs.shape[0] != expected:
+                     raise ValueError("Teacher logprobs are not aligned with the scoring sequence")
+                 # Upstream expects student-sequence coordinates. Prompt values are
+                 # masked from loss; preserve every response token without shifting.
+                 teacher_ids = torch.cat((
+                     teacher_ids.new_full((len(prompt_ids), *teacher_ids.shape[1:]), self.tokenizer.pad_token_id),
+-                    teacher_ids[len(teacher_prompt_ids):],
++                    teacher_ids[len(scoring_prompt_ids):],
+                 ), dim=0)
+                 teacher_logprobs = torch.cat((
+                     teacher_logprobs.new_zeros((len(prompt_ids), *teacher_logprobs.shape[1:])),
+-                    teacher_logprobs[len(teacher_prompt_ids):],
++                    teacher_logprobs[len(scoring_prompt_ids):],
+                 ), dim=0)
+             output.extra_fields["teacher_ids"] = teacher_ids
+             output.extra_fields["teacher_logprobs"] = teacher_logprobs
+--- a/verl/experimental/teacher_loop/teacher_manager.py
++++ b/verl/experimental/teacher_loop/teacher_manager.py
+@@ -142,3 +142,67 @@
+         teacher_logprobs = torch.tensor(teacher_output.extra_fields["prompt_logprobs"])
+         assert teacher_ids.shape[0] == teacher_logprobs.shape[0] == len(sequence_ids)
+         return teacher_ids, teacher_logprobs
++
++    async def generate_thinking_prefix(
++        self,
++        prompt_ids: list[int],
++        tokenizer,
++        response_length: int,
++        max_tokens: int,
++        routing_key: Optional[str] = None,
++    ) -> tuple[list[int], int]:
++        """Generate private Qwen3 reasoning, stopping before the final answer.
++
++        The caller appends the *student's* raw response to this returned prefix.
++        No student response is sent to this generation request. Token maps are
++        checked by chess-opd preflight, so the worker tokenizer is safe here.
++        """
++        if max_tokens <= 0 or response_length <= 0:
++            raise ValueError("Teacher thinking budget and student response length must be positive")
++        open_ids = tokenizer.encode("<think>", add_special_tokens=False)
++        close_ids = tokenizer.encode("</think>", add_special_tokens=False)
++        if len(open_ids) != 1 or len(close_ids) != 1 or open_ids == close_ids:
++            raise ValueError("Teacher thinking requires distinct single-token Qwen3 thinking delimiters")
++        open_id, close_id = open_ids[0], close_ids[0]
++        separator_ids = tokenizer.encode("\n\n", add_special_tokens=False)
++        teacher_key = self._resolve_teacher_key(routing_key)
++        context_limit = self.teacher_model_configs[teacher_key].inference.max_model_len
++        required = len(prompt_ids) + max_tokens + len(separator_ids) + response_length + 1
++        if context_limit is None or required > context_limit:
++            raise ValueError(
++                f"Teacher context too small for prompt + thinking + student response: "
++                f"need {required}, configured {context_limit}"
++            )
++        output = await self.teacher_client[teacher_key].generate(
++            request_id=uuid4().hex,
++            prompt_ids=list(prompt_ids),
++            sampling_params={
++                "max_tokens": max_tokens,
++                "temperature": 0.6,
++                "top_p": 0.95,
++                "top_k": 20,
++                "stop_token_ids": [close_id],
++                "detokenize": False,
++            },
++        )
++        generated = list(output.token_ids)
++        if getattr(output, "stop_reason", None) in ("abort", "aborted"):
++            raise RuntimeError("Teacher thinking request was aborted; refusing to score the student")
++        if close_id not in generated:
++            logger.error("Teacher thinking did not close: tokens=%d budget=%d", len(generated), max_tokens)
++            raise RuntimeError(
++                "Teacher did not generate </think>; no student scoring performed. "
++                "Inspect teacher generation or increase TEACHER_THINK_MAX_TOKENS."
++            )
++        # A token stop includes its token in token_ids. Ignore any hypothetical
++        # trailing answer: only the student's tokens may enter the scored answer.
++        thinking_ids = generated[:generated.index(close_id) + 1]
++        if not thinking_ids or thinking_ids[0] != open_id or thinking_ids.count(open_id) != 1:
++            raise RuntimeError("Teacher did not produce one leading <think>...</think> block")
++        if len(thinking_ids) > max_tokens or tokenizer.eos_token_id in thinking_ids:
++            raise RuntimeError("Invalid teacher thinking termination or length")
++        if not tokenizer.decode(thinking_ids[1:-1], skip_special_tokens=False).strip():
++            raise RuntimeError("Teacher produced an empty thinking block; refusing to score the student")
++        logger.info("Teacher thinking completed: %d tokens; student response: %d tokens",
++                    len(thinking_ids), response_length)
++        return list(prompt_ids) + thinking_ids + separator_ids, len(thinking_ids)

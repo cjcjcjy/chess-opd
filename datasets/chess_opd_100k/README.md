@@ -33,8 +33,11 @@ they are not extra training rows.
 - Student output: three move explanations and `Best Move: MOVE`.
 - The redundant instruction beginning `Use three distinct legal UCI moves.` is absent.
 - Teacher context is pretokenized into `extra_info.teacher_prompt_ids`. At training
-  time the official adapter appends the student's raw sampled response token IDs.
-  It does not generate a separate teacher reasoning trace.
+  time the adapter first generates a teacher reasoning block through `</think>`,
+  then appends two newlines and the student's raw sampled response token IDs for
+  scoring. Reasoning is private context and never becomes a student loss target.
+  The Parquet files do not contain generated reasoning and do not need regeneration
+  for this change.
 
 The two model tokenizers must match the saved vocabulary/chat-template fingerprints.
 Local model directory names may differ: the launcher checks tokenizer content, not

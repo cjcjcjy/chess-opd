@@ -198,9 +198,10 @@ def main() -> None:
             "## Teacher user message\n\n```text\n" + teacher_user + "\n```\n\n"
             "## Complete teacher thinking-enabled chat prefix\n\n```text\n"
             + result["teacher_chat_prefix"] + "\n```\n\n"
-            "During OPD, the student's sampled answer tokens are appended to this prefix. "
-            "The sampled answer differs on each rollout; the teacher scores its tokens "
-            "rather than generating a replacement answer.\n"
+            "During OPD, the teacher first generates a thinking block through </think> "
+            "from this prefix. Two newlines and the student's unchanged sampled answer tokens "
+            "are then appended for scoring. Only the student answer tokens receive loss; "
+            "the teacher's thinking is private context, not a replacement training answer.\n"
         )
     else:
         rendered = json.dumps(result, indent=2, ensure_ascii=False) + "\n"

@@ -7,7 +7,7 @@ export STUDENT_MODEL=${STUDENT_MODEL:-$ROOT/models/Qwen3-4B}
 export TEACHER_MODEL=${TEACHER_MODEL:-$ROOT/models/Qwen3-8B}
 TRAIN_DATA=${TRAIN_DATA:-$ROOT/datasets/chess_opd_100k/train.parquet}
 VAL_DATA=${VAL_DATA:-$ROOT/datasets/chess_opd_100k/dev.parquet}
-OUTPUT_DIR=${OUTPUT_DIR:-$ROOT/runs/official_opd_100k}
+OUTPUT_DIR=${OUTPUT_DIR:-$ROOT/runs/official_opd_100k_teacher_reasoning}
 PREFLIGHT_PYTHON=${PREFLIGHT_PYTHON:-python3}
 if [[ $PREFLIGHT_PYTHON == */* ]]; then
   PREFLIGHT_PYTHON=$(realpath "$PREFLIGHT_PYTHON")
@@ -23,6 +23,11 @@ export PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-$TRAIN_BATCH_SIZE}
 export MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-2048}
 export MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-4096}
 MAX_TEACHER_PROMPT_LENGTH=${MAX_TEACHER_PROMPT_LENGTH:-3072}
+TEACHER_THINK_MAX_TOKENS=${TEACHER_THINK_MAX_TOKENS:-8192}
+if [[ ! $TEACHER_THINK_MAX_TOKENS =~ ^[1-9][0-9]*$ ]]; then
+  echo "TEACHER_THINK_MAX_TOKENS must be a positive integer" >&2
+  exit 1
+fi
 export PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-8192}
 export ACTOR_LR=${ACTOR_LR:-5e-7}
 export TOTAL_EPOCHS=1
@@ -35,7 +40,7 @@ if [[ $(git -C "$VERL_DIR" rev-parse HEAD) != "$(cat "$ROOT/VERL_REVISION")" ]];
   echo "Run scripts/setup_verl.sh; official verl revision mismatch." >&2
   exit 1
 fi
-git -C "$VERL_DIR" apply --reverse --check "$ROOT/patches/teacher_prompt.patch"
+git -C "$VERL_DIR" apply --reverse --check "$ROOT/patches/teacher_thinking.patch"
 PREFLIGHT=(python3)
 if [[ $VERL_USE_UV != 0 ]]; then
   PREFLIGHT=(uv run --frozen --all-packages --extra vllm --extra fsdp python3)
@@ -53,7 +58,8 @@ LAUNCH=(bash examples/on_policy_distillation_trainer/run_qwen3_8b_fsdp.sh
   actor_rollout_ref.actor.loss_agg_mode=token-mean
   actor_rollout_ref.actor.ppo_epochs=1
   actor_rollout_ref.rollout.agent.num_workers=1
-  "distillation.teacher_models.teacher_model.inference.max_model_len=$((MAX_TEACHER_PROMPT_LENGTH + MAX_RESPONSE_LENGTH + 1))"
+  "+chess_opd.teacher_think_max_tokens=$TEACHER_THINK_MAX_TOKENS"
+  "distillation.teacher_models.teacher_model.inference.max_model_len=$((MAX_TEACHER_PROMPT_LENGTH + TEACHER_THINK_MAX_TOKENS + MAX_RESPONSE_LENGTH + 2))"
   "reward.custom_reward_function.path=$ROOT/examples/chess_opd/reward.py"
   reward.custom_reward_function.name=compute_score
   'trainer.logger=[console]'

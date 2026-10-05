@@ -4,7 +4,16 @@
 
 学生为 Qwen3-4B，`enable_thinking=False`；教师为 Qwen3-8B，`enable_thinking=True`。棋类 prompt 见 [完整示例](examples/chess_opd/prompt_example.md)：三条走法解释，最后一行 `Best Move: MOVE`。学生只看棋盘和合法走法；教师额外看 Stockfish 最佳三步及事实、cp/mate 分数。已移除 `Use three distinct legal UCI moves. Best Move must match the first move.`。
 
-teacher 开启 thinking 是指其 chat template 设置。OPD 仍直接对学生回答做 teacher-forcing 打分，不额外生成教师思考文本；student 关闭 thinking 的前缀不包含在 response loss 中。
+Teacher 现在先基于自己的 prompt 生成 `<think>...</think>`，在 `</think>` 处停止，再把学生原样采样的回答接在后面计算概率。teacher 的思考只作为其私有上下文，不作为 student 的训练目标。流程如下：
+
+```text
+student: student prompt → 学生回答 y
+teacher: teacher prompt → <think>教师思考</think> → 停止生成
+teacher 打分输入: teacher prompt + <think>教师思考</think> + 两个换行 + y
+训练位置: 仅 y 的 token（包含生成的 EOS）
+```
+
+教师思考生成时看不到学生回答。打分时，对每个学生 token 使用 `P_teacher(y_t | teacher prompt, teacher thinking, y_<t)`；不拿教师自己生成的最终答案对齐学生答案。student 关闭 thinking 的模板前缀不包含在 response loss 中。
 
 ## 官方实现与适配范围
 
@@ -12,8 +21,8 @@ teacher 开启 thinking 是指其 chat template 设置。OPD 仍直接对学生�
 
 - 官方负责 Ray 资源池、vLLM 学生采样和教师打分、FSDP 训练、蒸馏损失、optimizer 和 checkpoint。
 - 本仓库负责棋类 prompt、数据转换、验证指标和启动参数。
-- 官方默认让教师读取学生同一个 prompt。为保留教师私有 Stockfish 信息，附带 [输入适配补丁](patches/teacher_prompt.patch)，仅修改 `_compute_teacher_logprobs`：教师读取 `extra_info.teacher_prompt_ids + 原样学生 response_ids`；返回概率映射回学生序列坐标。响应 token 不解码重编码、不增删、不位移。prompt 区域填占位值并由官方 response mask 排除。
-- 补丁不重写训练循环或损失，也不让教师生成固定答案。缺少棋类教师私有输入时直接报错，避免悄悄退回相同 prompt。
+- 官方默认让教师读取学生同一个 prompt。[输入适配补丁](patches/teacher_prompt.patch) 加入私有 prompt；随后应用 [教师思考补丁](patches/teacher_thinking.patch)，通过官方 teacher client 先生成思考，再调用原有概率接口。返回概率去掉 teacher prompt 和 thinking，映射回学生序列坐标。学生响应 token 不解码重编码、不增删、不位移；prompt 区域由官方 response mask 排除。
+- 两个补丁只适配教师上下文和请求，不重写训练循环或损失。缺少私有 prompt、思考为空/被截断/未闭合、上下文预算不足时，该样本报错且不调用打分。官方 rollout 层处理失败状态；请检查 worker 日志，不能把失败样本当成完成监督。
 
 默认遵循官方示例的 **`k1 + use_policy_gradient=True`**，不是历史手写版的完整词表 forward KL。所有学生采样 response token（包括生成的 EOS）进入官方 response mask，不做走法/解释差异加权。官方示例的损失裁剪设置保留。默认 `use_task_rewards=False`，棋类 reward 不进入训练目标。
 
@@ -48,7 +57,7 @@ python -m pip install uv
 bash scripts/setup_verl.sh
 ```
 
-官方 checkout 默认位于 `vendor/verl`，不会提交到本仓库。脚本拒绝覆盖已有非 Git 目录或切换不同版本的 checkout，重复执行不会重复打补丁。只获取代码不安装环境：`bash scripts/setup_verl.sh --checkout-only`。`VERL_DIR` 可指定其他独立目录。
+官方 checkout 默认位于 `vendor/verl`，不会提交到本仓库。脚本拒绝覆盖已有非 Git 目录或切换不同版本的 checkout，重复执行不会重复打补丁。已有上一版输入补丁的 checkout 也会自动补上教师思考改动。更新本仓库后运行 `bash scripts/setup_verl.sh --checkout-only` 即可更新补丁而不重装环境。`VERL_DIR` 可指定其他独立目录。
 
 仓库私有，对方需要 GitHub 访问权限。
 
@@ -122,7 +131,11 @@ bash examples/chess_opd/run_train.sh --dry-run
 
 默认 `TRAIN_BATCH_SIZE=4`、`PPO_MINI_BATCH_SIZE=4`、`ACTOR_LR=5e-7`，一个 epoch。官方 dataloader 会丢弃不满 batch 的尾部，本仓库启动检查因此要求训练行数能被 batch size 整除，避免“完整 epoch”遗漏尾部；必要时设置 `TRAIN_BATCH_SIZE=1 PPO_MINI_BATCH_SIZE=1`。
 
-`MAX_PROMPT_LENGTH=2048`、`MAX_TEACHER_PROMPT_LENGTH=3072`、`MAX_RESPONSE_LENGTH=4096` 分别控制两个 prompt 和学生回答预算。评估教师自由生成时仍可能有较长 thinking，应独立检查截断率。改 prompt/tokenizer 后重新转换 parquet。
+`MAX_PROMPT_LENGTH=2048`、`MAX_TEACHER_PROMPT_LENGTH=3072`、`MAX_RESPONSE_LENGTH=4096` 分别控制两个 prompt 和学生回答预算。新增 `TEACHER_THINK_MAX_TOKENS=8192` 控制教师思考预算，采样使用 temperature 0.6、top-p 0.95、top-k 20。教师服务上下文上限自动设为 `teacher prompt + teacher thinking + student response + 2`（一个换行分隔 token 和一个打分接口生成 token）。当前默认合计 15,362 token。
+
+教师必须实际生成闭合的 `</think>` 才会打分；不会给截断思考强行补标签，也不自动反复采样。若 worker 日志出现 `Teacher did not generate </think>`，先检查生成，必要时增加 `TEACHER_THINK_MAX_TOKENS`。成功样本记录 `teacher_thinking_tokens` 和 `teacher_scoring_prompt_tokens`，并有教师完成长度日志。思考越长，教师生成时间和上下文显存开销越大。
+
+100K parquet 内的 prompt 无需更改，教师思考在训练时生成，不预存在数据中。改 prompt/tokenizer 才需要重新转换 parquet。
 
 ## 训练
 
@@ -139,14 +152,14 @@ CUDA_VISIBLE_DEVICES=0,1 OUTPUT_DIR=runs/official_smoke bash examples/chess_opd/
 mkdir -p logs
 CUDA_VISIBLE_DEVICES=0,1 \
   STUDENT_MODEL=models/Qwen3-4B TEACHER_MODEL=models/Qwen3-8B \
-  OUTPUT_DIR=runs/official_opd_100k \
+  OUTPUT_DIR=runs/official_opd_100k_teacher_reasoning \
   nohup bash examples/chess_opd/run_train.sh > logs/official_opd.log 2>&1 < /dev/null &
 echo $! > logs/official_opd.pid
 ```
 
 模型目录可设置 `STUDENT_MODEL` / `TEACHER_MODEL`。脚本默认通过官方 `uv run --frozen --all-packages --extra vllm --extra fsdp` 启动 driver 和 Ray worker，避免跑到本机旧 verl。仅在手工准备了兼容的官方环境时使用 `VERL_USE_UV=0`。
 
-官方 checkpoint 位于 `OUTPUT_DIR/global_step_N`。相同配置、数据和输出目录下再次运行时，官方 `trainer.resume_mode=auto` 恢复；显式路径可加 `trainer.resume_mode=resume_path trainer.resume_from_path=/absolute/path/global_step_N`。不要加载历史手写版 checkpoint。
+官方 checkpoint 位于 `OUTPUT_DIR/global_step_N`。相同配置、数据和输出目录下再次运行时，官方 `trainer.resume_mode=auto` 恢复；显式路径可加 `trainer.resume_mode=resume_path trainer.resume_from_path=/absolute/path/global_step_N`。本次默认输出目录已更换，避免自动恢复到未生成教师思考的旧训练。不要加载历史手写版 checkpoint。
 
 默认只记录 console，`SAVE_FREQ=250`，`TEST_FREQ=-1` 关闭周期验证；设置 `TEST_FREQ=250` 可启用官方验证。关注官方 distillation loss、生成长度、截断和留出集指标，不能单凭 KL 下降断言学生进步。
 
@@ -157,7 +170,7 @@ echo $! > logs/official_opd.pid
 ```bash
 cd vendor/verl
 uv run --frozen --all-packages --extra vllm --extra fsdp python -m verl.model_merger merge \
-  --backend fsdp --local_dir ../../runs/official_opd_100k/global_step_N/actor \
+  --backend fsdp --local_dir ../../runs/official_opd_100k_teacher_reasoning/global_step_N/actor \
   --target_dir ../../models/chess-opd-4b
 cd ../..
 uv pip install --python vendor/verl/.venv/bin/python python-chess==1.999

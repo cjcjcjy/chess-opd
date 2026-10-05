@@ -14,6 +14,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class OfficialConfigTest(unittest.TestCase):
+    def test_setup_clean_checkout_and_upgrade(self):
+        upstream = Path(os.environ.get("VERL_DIR", ROOT / "vendor/verl")).resolve()
+        if not (upstream / ".git").exists():
+            self.skipTest("Run bash scripts/setup_verl.sh --checkout-only")
+        for old_patch_installed in (False, True):
+            with self.subTest(upgrade=old_patch_installed), tempfile.TemporaryDirectory() as directory:
+                checkout = Path(directory) / "verl"
+                subprocess.run(["git", "clone", "--shared", str(upstream), str(checkout)],
+                               check=True, capture_output=True)
+                if old_patch_installed:
+                    subprocess.run(["git", "-C", str(checkout), "apply", str(ROOT / "patches/teacher_prompt.patch")],
+                                   check=True, capture_output=True)
+                env = {**os.environ, "VERL_DIR": str(checkout)}
+                command = ["bash", str(ROOT / "scripts/setup_verl.sh"), "--checkout-only"]
+                subprocess.run(command, env=env, check=True, capture_output=True)
+                diff = subprocess.check_output(["git", "-C", str(checkout), "diff"])
+                subprocess.run(command, env=env, check=True, capture_output=True)
+                self.assertEqual(diff, subprocess.check_output(["git", "-C", str(checkout), "diff"]))
+                for relative in ("agent_loop/agent_loop.py", "teacher_loop/teacher_manager.py"):
+                    path = "verl/experimental/" + relative
+                    self.assertEqual((checkout / path).read_bytes(), (upstream / path).read_bytes())
+
     def test_official_launcher_and_hydra_overrides(self):
         upstream = Path(os.environ.get("VERL_DIR", ROOT / "vendor/verl")).resolve()
         if not (upstream / "verl/trainer/config").exists():
@@ -53,6 +75,9 @@ else:
             self.assertFalse(loss["use_task_rewards"])
             self.assertEqual(resolved["data"]["train_files"], str(temp / "train.parquet"))
             self.assertFalse(resolved["data"]["apply_chat_template_kwargs"]["enable_thinking"])
+            self.assertEqual(resolved["chess_opd"]["teacher_think_max_tokens"], 8192)
+            self.assertEqual(resolved["distillation"]["teacher_models"]["teacher_model"]["inference"]["max_model_len"],
+                             3072 + 8192 + 4096 + 2)
             self.assertEqual(resolved["actor_rollout_ref"]["actor"]["loss_agg_mode"], "token-mean")
             (temp / "resolved.json").write_text(json.dumps(resolved, indent=2))
 
