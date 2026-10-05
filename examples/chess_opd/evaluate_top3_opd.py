@@ -142,7 +142,7 @@ def main() -> None:
         content = teacher_prompt(row) if args.mode == "teacher" else student_prompt(row["fen"])
         messages = [{"role": "user", "content": content}]
         prompt = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, enable_thinking=True,
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=args.mode == "teacher",
         )
         length = len(tokenizer.encode(prompt, add_special_tokens=False))
         if length + args.max_tokens > args.max_model_len:

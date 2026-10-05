@@ -1,0 +1,33 @@
+{
+  "source_file": "stockfish_depth12.jsonl",
+  "source_sha256": "abfa5efa8d51fde38c3b2d5c11e98d08288cfaf403f2c0cdf5262ab3d175b02c",
+  "scanned": 1320343,
+  "train_positions": 100000,
+  "holdout_positions": {
+    "dev": 128,
+    "test": 825
+  },
+  "phase_counts": {
+    "middlegame": 44000,
+    "endgame": 28000,
+    "opening": 28000
+  },
+  "engine_counts": {
+    "Stockfish 11 64": 100000
+  },
+  "depth_counts": {
+    "12": 100000
+  },
+  "seed": 20261005,
+  "available": {
+    "middlegame": 758075,
+    "opening": 147538,
+    "endgame": 343930
+  },
+  "excluded": {
+    "invalid_terminal_or_fewer_than_three": 69555,
+    "duplicate_or_holdout": 1245
+  },
+  "split_policy": "Unique FEN first four fields; fixed dev/test excluded",
+  "source_policy": "Only FEN and engine analysis are used; no previous model responses"
+}

@@ -2,6 +2,8 @@
 
 Scores below reproduce the user-provided example; fresh Stockfish analysis may differ.
 
+Chat templates: student `enable_thinking=False`; teacher `enable_thinking=True`.
+
 ## Student user message
 
 ```text
@@ -36,7 +38,6 @@ Please choose and evaluate the best three legal moves, best first, and respond w
 3. MOVE: describe the outcome of this move and judge the value of it.
 Best Move: MOVE
 
-Use three distinct legal UCI moves. Best Move must match the first move.
 ```
 
 ## Teacher user message

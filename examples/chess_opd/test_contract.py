@@ -25,6 +25,7 @@ class ContractTest(unittest.TestCase):
         self.assertNotIn("cp=", student)
         self.assertNotIn("stockfish", student)
         self.assertIn("Best Move: MOVE", student)
+        self.assertNotIn("Use three distinct legal UCI moves.", student)
 
     def test_output_and_thinking(self):
         self.assertTrue(parse_answer(ANSWER)[2])

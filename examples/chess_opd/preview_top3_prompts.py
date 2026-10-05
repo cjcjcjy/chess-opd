@@ -81,9 +81,7 @@ def student_prompt(fen: str) -> str:
 1. MOVE: describe the outcome of this move and judge the value of it.
 2. MOVE: describe the outcome of this move and judge the value of it.
 3. MOVE: describe the outcome of this move and judge the value of it.
-Best Move: MOVE
-
-Use three distinct legal UCI moves. Best Move must match the first move."""
+Best Move: MOVE"""
 
 
 def position_prompt(fen: str) -> str:
@@ -179,7 +177,7 @@ def main() -> None:
             parser.error("student and teacher token mappings differ")
         student_prefix = student.apply_chat_template(
             [{"role": "user", "content": user}], tokenize=False,
-            add_generation_prompt=True, enable_thinking=True)
+            add_generation_prompt=True, enable_thinking=False)
         teacher_prefix = teacher.apply_chat_template(
             [{"role": "user", "content": teacher_user}], tokenize=False,
             add_generation_prompt=True, enable_thinking=True)
@@ -188,18 +186,18 @@ def main() -> None:
         "analysis": analysis,
         "student_messages": [{"role": "user", "content": user}],
         "teacher_messages": [{"role": "user", "content": teacher_user}],
-        "student_thinking_prefix": student_prefix,
-        "teacher_thinking_prefix": teacher_prefix,
+        "student_chat_prefix": student_prefix,
+        "teacher_chat_prefix": teacher_prefix,
     }
     if args.output and args.output.suffix.lower() == ".md":
         rendered = (
             "# Top-three chess OPD prompt preview\n\n"
             f"Student: `{args.student}`  \nTeacher: `{args.teacher}`  \n"
-            "Both use `enable_thinking=True`.\n\n"
+            "Student uses `enable_thinking=False`; teacher uses `enable_thinking=True`.\n\n"
             "## Student user message\n\n```text\n" + user + "\n```\n\n"
             "## Teacher user message\n\n```text\n" + teacher_user + "\n```\n\n"
             "## Complete teacher thinking-enabled chat prefix\n\n```text\n"
-            + result["teacher_thinking_prefix"] + "\n```\n\n"
+            + result["teacher_chat_prefix"] + "\n```\n\n"
             "During OPD, the student's sampled answer tokens are appended to this prefix. "
             "The sampled answer differs on each rollout; the teacher scores its tokens "
             "rather than generating a replacement answer.\n"

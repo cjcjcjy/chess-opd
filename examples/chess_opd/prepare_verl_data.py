@@ -13,8 +13,8 @@ from transformers import AutoTokenizer
 from examples.chess_opd.preview_top3_prompts import student_prompt, teacher_prompt
 
 
-def encode(tokenizer, messages):
-    ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, enable_thinking=True)
+def encode(tokenizer, messages, *, enable_thinking):
+    ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, enable_thinking=enable_thinking)
     return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
 
@@ -32,8 +32,8 @@ def convert_row(row, student, teacher, index, max_prompt_length, max_teacher_pro
         raise ValueError(f"Incomplete or duplicate move ranking: {row['fen']}")
     messages = [{"role": "user", "content": student_prompt(row["fen"])}]
     teacher_messages = [{"role": "user", "content": teacher_prompt(row)}]
-    student_ids = encode(student, messages)
-    teacher_ids = encode(teacher, teacher_messages)
+    student_ids = encode(student, messages, enable_thinking=False)
+    teacher_ids = encode(teacher, teacher_messages, enable_thinking=True)
     if len(student_ids) > max_prompt_length or len(teacher_ids) > max_teacher_prompt_length:
         raise ValueError(f"Overlong prompt at row {index}: student={len(student_ids)}, teacher={len(teacher_ids)}")
     return {
@@ -41,6 +41,7 @@ def convert_row(row, student, teacher, index, max_prompt_length, max_teacher_pro
         "reward_model": {"style": "rule", "ground_truth": json.dumps({"legal": ranked, "top3": ranked[:3]})},
         "extra_info": {
             "index": index, "source_index": row.get("source_index", index), "fen": row["fen"],
+            "phase": row.get("phase", "unknown"),
             "teacher_prompt_ids": teacher_ids, "student_prompt_length": len(student_ids),
         },
     }
@@ -84,16 +85,18 @@ def main():
                     max_teacher = max(max_teacher, len(converted["extra_info"]["teacher_prompt_ids"]))
                     pending.append(converted)
                     count += 1
+                    if count % 10000 == 0:
+                        print(f"{split}: converted {count} positions", flush=True)
                     if len(pending) == 256:
                         table = pa.Table.from_pylist(pending)
                         if writer is None:
-                            writer = pq.ParquetWriter(output, table.schema)
+                            writer = pq.ParquetWriter(output, table.schema, compression="zstd", compression_level=6)
                         writer.write_table(table)
                         pending = []
             if pending:
                 table = pa.Table.from_pylist(pending)
                 if writer is None:
-                    writer = pq.ParquetWriter(output, table.schema)
+                    writer = pq.ParquetWriter(output, table.schema, compression="zstd", compression_level=6)
                 writer.write_table(table)
         finally:
             if writer is not None:
@@ -107,10 +110,11 @@ def main():
         stats[split] = {"positions": count, "max_student_prompt_tokens": max_student,
                         "max_teacher_prompt_tokens": max_teacher,
                         "sha256": digest.hexdigest()}
-    manifest = {"student": str(args.student.resolve()), "teacher": str(args.teacher.resolve()),
+    manifest = {"student_model": args.student.name, "teacher_model": args.teacher.name,
                 "student_tokenizer_sha256": tokenizer_fingerprint(student),
                 "teacher_tokenizer_sha256": tokenizer_fingerprint(teacher),
-                "enable_thinking": True, "prompt_version": "top3-colon-best-move-20261005", "splits": stats}
+                "student_enable_thinking": False, "teacher_enable_thinking": True,
+                "prompt_version": "top3-student-nothink-teacher-think-v1", "splits": stats}
     (args.output_dir / "metadata.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest, indent=2))
 

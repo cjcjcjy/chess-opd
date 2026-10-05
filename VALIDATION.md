@@ -1,5 +1,34 @@
 # Official verl migration validation — 2026-10-05
 
+## Ready 100K dataset and asymmetric thinking update
+
+Student chat templates now use `enable_thinking=False`, while serialized teacher
+prefixes and teacher-generation evaluation use `enable_thinking=True`. The redundant
+student instruction about distinct moves and matching Best Move has been removed.
+Default training paths point to the committed `datasets/chess_opd_100k` data.
+
+Nine CPU unittest groups pass, including an additional real-Qwen3-tokenizer test
+checking the student's empty thinking block and the teacher's open assistant prefix.
+The official Hydra configuration test now asserts student thinking is disabled.
+
+The source scan selected exactly 100,000 training positions: 28,000 opening,
+44,000 middlegame and 28,000 endgame. The selected training and fixed held-out engine
+records (100,953 total) all have scores ordered best-first under cp/mate ordering.
+Full artifact audit details are recorded with the dataset in `audit.json`.
+
+The full Parquet artifact audit passed: 100,953 distinct FEN keys, no cross-split
+overlap, exact legal-move coverage on every row, no student reference leaks and no
+occurrences of the removed instruction. All three SHA256 checks passed. Maximum
+training prompt lengths are 906 student tokens and 1,032 teacher tokens.
+The pinned official RLHFDataset loaded all 100,000 training rows; first/middle/last
+rows were collated and checked with real Qwen3 tokenizers for the correct prefixes.
+The default launcher's full-data preflight and dry run also passed: 100,000 train
+rows plus 128 validation rows, 25,000 batches per epoch, student thinking disabled.
+
+No training was started for this data preparation task.
+
+## Earlier migration checks
+
 The current training entry point delegates to the official
 `examples/on_policy_distillation_trainer/run_qwen3_8b_fsdp.sh` at
 `8718ca30a3f002f93b7c4fd99b9b2506718681bc`.

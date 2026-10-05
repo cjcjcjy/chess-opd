@@ -2,7 +2,9 @@
 
 当前训练入口使用 [verl 官方 On-Policy Distillation 示例](https://github.com/verl-project/verl/tree/main/examples/on_policy_distillation_trainer)，具体调用 `run_qwen3_8b_fsdp.sh` → `verl.trainer.main_ppo`。不再使用手写 `train_top3_opd.py`，该文件已从当前分支删除；历史实现仍可在 Git 历史中找到。
 
-学生为 Qwen3-4B，教师为 Qwen3-8B，均开启 thinking。棋类 prompt 沿用 [完整示例](examples/chess_opd/prompt_example.md)：三条走法解释，最后一行 `Best Move: MOVE`。学生只看棋盘和合法走法；教师额外看 Stockfish 最佳三步及事实、cp/mate 分数。
+学生为 Qwen3-4B，`enable_thinking=False`；教师为 Qwen3-8B，`enable_thinking=True`。棋类 prompt 见 [完整示例](examples/chess_opd/prompt_example.md)：三条走法解释，最后一行 `Best Move: MOVE`。学生只看棋盘和合法走法；教师额外看 Stockfish 最佳三步及事实、cp/mate 分数。已移除 `Use three distinct legal UCI moves. Best Move must match the first move.`。
+
+teacher 开启 thinking 是指其 chat template 设置。OPD 仍直接对学生回答做 teacher-forcing 打分，不额外生成教师思考文本；student 关闭 thinking 的前缀不包含在 response loss 中。
 
 ## 官方实现与适配范围
 
@@ -13,9 +15,23 @@
 - 官方默认让教师读取学生同一个 prompt。为保留教师私有 Stockfish 信息，附带 [输入适配补丁](patches/teacher_prompt.patch)，仅修改 `_compute_teacher_logprobs`：教师读取 `extra_info.teacher_prompt_ids + 原样学生 response_ids`；返回概率映射回学生序列坐标。响应 token 不解码重编码、不增删、不位移。prompt 区域填占位值并由官方 response mask 排除。
 - 补丁不重写训练循环或损失，也不让教师生成固定答案。缺少棋类教师私有输入时直接报错，避免悄悄退回相同 prompt。
 
-默认遵循官方示例的 **`k1 + use_policy_gradient=True`**，不是历史手写版的完整词表 forward KL。所有采样 response token（包括 thinking 和生成的 EOS）进入官方 response mask，不做走法/解释差异加权。官方示例的损失裁剪设置保留。默认 `use_task_rewards=False`，棋类 reward 只用于验证。
+默认遵循官方示例的 **`k1 + use_policy_gradient=True`**，不是历史手写版的完整词表 forward KL。所有学生采样 response token（包括生成的 EOS）进入官方 response mask，不做走法/解释差异加权。官方示例的损失裁剪设置保留。默认 `use_task_rewards=False`，棋类 reward 不进入训练目标。
 
 如需官方的 top-k forward KL，可设置 `DISTILLATION_LOSS_MODE=forward_kl_topk USE_POLICY_GRADIENT=False DISTILLATION_TOPK=64`。它是 top-k 近似，不是完整词表 KL。
+
+## 已准备的 100K 数据
+
+仓库直接包含 [datasets/chess_opd_100k](datasets/chess_opd_100k)，不使用 Git LFS 或外部下载链接。克隆仓库即可得到训练数据，无需运行 Stockfish、重新选样或生成 prompt。
+
+| 文件 | 用途 | 条数 |
+|---|---|---:|
+| `train.parquet` | 训练 | 100,000 |
+| `dev.parquet` | 验证 | 128 |
+| `test.parquet` | 测试 | 825 |
+
+训练集为开局 28,000、中局 44,000、残局 28,000，来自现有 Stockfish 11 depth-12 分析；验证/测试集沿用固定 depth-14 分析。三个 split 按 FEN 前四个字段去重并检查无交集；不声称来自完全独立的对局。数据不含旧模型回答。来源、抽样种子、SHA256 和长度统计见该目录的说明和 JSON 清单。
+
+默认启动脚本已指向这份数据。batch size 4 时，一个完整 epoch 是 **25,000 个训练 batch**。
 
 ## 环境
 
@@ -38,7 +54,15 @@ bash scripts/setup_verl.sh
 
 ## 数据和模型准备
 
-以下命令在 chess-opd 根目录执行：
+**只需跑训练的人不用准备数据。** 官方环境安装完成后，下载模型或通过环境变量指定已有模型路径：
+
+```bash
+vendor/verl/.venv/bin/hf download Qwen/Qwen3-4B --local-dir models/Qwen3-4B
+vendor/verl/.venv/bin/hf download Qwen/Qwen3-8B --local-dir models/Qwen3-8B
+PREFLIGHT_PYTHON=vendor/verl/.venv/bin/python bash examples/chess_opd/run_train.sh --dry-run
+```
+
+下面仅用于需要重新生成其他数据的情况，在 chess-opd 根目录执行：
 
 ```bash
 uv venv --python 3.11 .venv-data
@@ -58,7 +82,7 @@ python -m examples.chess_opd.build_top3_engine_data \
   --test-source examples/chess_opd/sample_data/heldout.raw.jsonl \
   --dev-positions 2 --depth 4 --workers 2 --output-dir data/engine_smoke
 python -m examples.chess_opd.prepare_verl_data \
-  --input-dir data/engine_smoke --output-dir data/verl
+  --input-dir data/engine_smoke --output-dir data/verl_smoke
 ```
 
 第二步生成官方 RLHFDataset 可读取的 train/dev/test parquet：
@@ -71,7 +95,7 @@ python -m examples.chess_opd.prepare_verl_data \
 | `extra_info.fen` / `index` | 棋盘与样本标识 |
 | `reward_model.ground_truth` | 验证用合法走法/前三名，不进入学生 prompt |
 
-转换时校验学生/教师词表和特殊 token 映射一致，检查全部合法走法覆盖、跨 split 重复和长度。保存 tokenizer/chat template 指纹；启动时不一致会要求重新生成数据。`teacher_prompt_ids` 包含 generation prefix，thinking 开关为 True。
+转换时校验学生/教师词表和特殊 token 映射一致，检查全部合法走法覆盖、跨 split 重复和长度。保存 tokenizer/chat template 指纹；启动时校验文件 SHA256、行数和指纹。student 编码为 thinking=False，`teacher_prompt_ids` 包含 thinking=True 的 generation prefix。历史两者均开启 thinking 的 parquet 会被拒绝。
 
 正式数据可从有权使用的 PGN 按对局划分导出十万级局面，再标注、转换：
 
@@ -98,24 +122,24 @@ bash examples/chess_opd/run_train.sh --dry-run
 
 默认 `TRAIN_BATCH_SIZE=4`、`PPO_MINI_BATCH_SIZE=4`、`ACTOR_LR=5e-7`，一个 epoch。官方 dataloader 会丢弃不满 batch 的尾部，本仓库启动检查因此要求训练行数能被 batch size 整除，避免“完整 epoch”遗漏尾部；必要时设置 `TRAIN_BATCH_SIZE=1 PPO_MINI_BATCH_SIZE=1`。
 
-`MAX_PROMPT_LENGTH=2048`、`MAX_TEACHER_PROMPT_LENGTH=3072`、`MAX_RESPONSE_LENGTH=4096` 分别控制两个 prompt 和共同回答预算。4096 不保证 thinking 一定完成，应先在真实 dev 集检查截断率。改 prompt/tokenizer 后重新转换 parquet。
+`MAX_PROMPT_LENGTH=2048`、`MAX_TEACHER_PROMPT_LENGTH=3072`、`MAX_RESPONSE_LENGTH=4096` 分别控制两个 prompt 和学生回答预算。评估教师自由生成时仍可能有较长 thinking，应独立检查截断率。改 prompt/tokenizer 后重新转换 parquet。
 
 ## 训练
 
-先做一次官方链路检查（不用于判断学习效果）：
+可选：先做一次官方链路检查（使用独立输出目录，不用于判断学习效果）：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 bash examples/chess_opd/run_train.sh \
+CUDA_VISIBLE_DEVICES=0,1 OUTPUT_DIR=runs/official_smoke bash examples/chess_opd/run_train.sh \
   trainer.total_training_steps=1 trainer.save_freq=1
 ```
 
-后台跑正式数据的完整 epoch：
+对方可以直接后台跑已准备的 100K 数据、完整一个 epoch：
 
 ```bash
 mkdir -p logs
 CUDA_VISIBLE_DEVICES=0,1 \
-  TRAIN_DATA=data/verl_full/train.parquet VAL_DATA=data/verl_full/dev.parquet \
-  OUTPUT_DIR=runs/official_opd \
+  STUDENT_MODEL=models/Qwen3-4B TEACHER_MODEL=models/Qwen3-8B \
+  OUTPUT_DIR=runs/official_opd_100k \
   nohup bash examples/chess_opd/run_train.sh > logs/official_opd.log 2>&1 < /dev/null &
 echo $! > logs/official_opd.pid
 ```
@@ -133,12 +157,12 @@ echo $! > logs/official_opd.pid
 ```bash
 cd vendor/verl
 uv run --frozen --all-packages --extra vllm --extra fsdp python -m verl.model_merger merge \
-  --backend fsdp --local_dir ../../runs/official_opd/global_step_N/actor \
+  --backend fsdp --local_dir ../../runs/official_opd_100k/global_step_N/actor \
   --target_dir ../../models/chess-opd-4b
 cd ../..
 uv pip install --python vendor/verl/.venv/bin/python python-chess==1.999
 CUDA_VISIBLE_DEVICES=0 vendor/verl/.venv/bin/python -m examples.chess_opd.evaluate_top3_opd \
-  --data data/engine/test.jsonl --model models/chess-opd-4b --mode student \
+  --data datasets/chess_opd_100k/test.engine.jsonl --model models/chess-opd-4b --mode student \
   --batch-size 1 --max-tokens 4096 --max-model-len 8192 --output-dir runs/eval_trained
 ```
 
@@ -150,4 +174,4 @@ CUDA_VISIBLE_DEVICES=0 vendor/verl/.venv/bin/python -m examples.chess_opd.evalua
 
 见 [VALIDATION.md](VALIDATION.md)。此前手写版的 GPU 冒烟测试不代表官方训练已经跑通。本次迁移验证数据、补丁对齐与配置，不声称在当前旧驱动/依赖环境上完成了官方 GPU 训练。
 
-代码 Apache-2.0；模型、Stockfish 和棋谱遵守各自许可证。仓库不含权重或正式私有数据。
+代码 Apache-2.0；模型、Stockfish 和棋谱遵守各自许可证。仓库包含上述已准备的棋局数据，不包含模型权重或训练 checkpoint。

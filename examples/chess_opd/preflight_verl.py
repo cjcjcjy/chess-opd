@@ -32,6 +32,17 @@ def main():
     sizes = {}
     for split, path in (("train", args.train), ("val", args.val)):
         metadata = json.loads((path.parent / "metadata.json").read_text())
+        if metadata.get("student_enable_thinking") is not False or metadata.get("teacher_enable_thinking") is not True:
+            parser.error("Expected student thinking=False and teacher thinking=True; regenerate old parquet")
+        expected = metadata["splits"].get(path.stem)
+        if expected is None:
+            parser.error(f"No manifest entry for {path.name}")
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected["sha256"] or pq.ParquetFile(path).metadata.num_rows != expected["positions"]:
+            parser.error(f"Dataset checksum or row count mismatch: {path}")
         for name, tokenizer in (("student", student), ("teacher", teacher)):
             payload = {"vocab": tokenizer.get_vocab(), "special": tokenizer.special_tokens_map,
                        "chat_template": tokenizer.chat_template}
@@ -53,7 +64,7 @@ def main():
                 seen.add(key)
                 # Tokenize with the actual runtime tokenizer, not just saved length metadata.
                 prompt_ids = student.apply_chat_template(row["prompt"], tokenize=True,
-                    add_generation_prompt=True, enable_thinking=True)
+                    add_generation_prompt=True, enable_thinking=False)
                 if hasattr(prompt_ids, "keys"):
                     prompt_ids = prompt_ids["input_ids"]
                 if len(prompt_ids) > args.max_prompt:

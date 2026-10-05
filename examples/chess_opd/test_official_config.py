@@ -52,7 +52,7 @@ else:
             self.assertTrue(loss["use_policy_gradient"])
             self.assertFalse(loss["use_task_rewards"])
             self.assertEqual(resolved["data"]["train_files"], str(temp / "train.parquet"))
-            self.assertTrue(resolved["data"]["apply_chat_template_kwargs"]["enable_thinking"])
+            self.assertFalse(resolved["data"]["apply_chat_template_kwargs"]["enable_thinking"])
             self.assertEqual(resolved["actor_rollout_ref"]["actor"]["loss_agg_mode"], "token-mean")
             (temp / "resolved.json").write_text(json.dumps(resolved, indent=2))
 

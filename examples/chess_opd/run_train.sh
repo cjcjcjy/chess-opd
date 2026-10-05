@@ -5,9 +5,13 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 VERL_DIR=${VERL_DIR:-$ROOT/vendor/verl}
 export STUDENT_MODEL=${STUDENT_MODEL:-$ROOT/models/Qwen3-4B}
 export TEACHER_MODEL=${TEACHER_MODEL:-$ROOT/models/Qwen3-8B}
-TRAIN_DATA=${TRAIN_DATA:-$ROOT/data/verl/train.parquet}
-VAL_DATA=${VAL_DATA:-$ROOT/data/verl/dev.parquet}
-OUTPUT_DIR=${OUTPUT_DIR:-$ROOT/runs/official_opd}
+TRAIN_DATA=${TRAIN_DATA:-$ROOT/datasets/chess_opd_100k/train.parquet}
+VAL_DATA=${VAL_DATA:-$ROOT/datasets/chess_opd_100k/dev.parquet}
+OUTPUT_DIR=${OUTPUT_DIR:-$ROOT/runs/official_opd_100k}
+PREFLIGHT_PYTHON=${PREFLIGHT_PYTHON:-python3}
+if [[ $PREFLIGHT_PYTHON == */* ]]; then
+  PREFLIGHT_PYTHON=$(realpath "$PREFLIGHT_PYTHON")
+fi
 for name in STUDENT_MODEL TEACHER_MODEL TRAIN_DATA VAL_DATA OUTPUT_DIR VERL_DIR; do
   # Resolve before changing into the official checkout.
   printf -v "$name" '%s' "$(realpath -m "${!name}")"
@@ -26,7 +30,7 @@ export SAVE_FREQ=${SAVE_FREQ:-250} TEST_FREQ=${TEST_FREQ:--1}
 export DISTILLATION_LOSS_MODE=${DISTILLATION_LOSS_MODE:-k1}
 export USE_POLICY_GRADIENT=${USE_POLICY_GRADIENT:-True}
 export VERL_USE_UV=${VERL_USE_UV:-1}
-export PROJECT_NAME=chess_opd EXPERIMENT_NAME=${EXPERIMENT_NAME:-qwen3_4b_from_8b}
+export PROJECT_NAME=chess_opd EXPERIMENT_NAME=${EXPERIMENT_NAME:-qwen3_4b_nothink_from_8b_think_100k}
 if [[ $(git -C "$VERL_DIR" rev-parse HEAD) != "$(cat "$ROOT/VERL_REVISION")" ]]; then
   echo "Run scripts/setup_verl.sh; official verl revision mismatch." >&2
   exit 1
@@ -44,7 +48,7 @@ LAUNCH=(bash examples/on_policy_distillation_trainer/run_qwen3_8b_fsdp.sh
   data.shuffle=True
   data.filter_overlong_prompts=False
   data.dataloader_num_workers=0
-  '+data.apply_chat_template_kwargs.enable_thinking=True'
+  '+data.apply_chat_template_kwargs.enable_thinking=False'
   "actor_rollout_ref.model.lora_rank=${LORA_RANK:-0}"
   actor_rollout_ref.actor.loss_agg_mode=token-mean
   actor_rollout_ref.actor.ppo_epochs=1
