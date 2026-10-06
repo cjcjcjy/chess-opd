@@ -58,7 +58,8 @@ else:
                    "VERL_USE_UV": "0", "VERL_DIR": str(upstream), "CAPTURE_ARGV": str(capture),
                    "STUDENT_MODEL": str(temp / "student"), "TEACHER_MODEL": str(temp / "teacher"),
                    "TRAIN_DATA": str(temp / "train.parquet"), "VAL_DATA": str(temp / "dev.parquet"),
-                   "OUTPUT_DIR": str(temp / "output")}
+                   "OUTPUT_DIR": str(temp / "output"), "WANDB_DIR": str(temp / "wandb-logs"),
+                   "PROJECT_NAME": "chess_opd_test", "EXPERIMENT_NAME": "lora_logging_test"}
             for key in ("LORA_RANK", "LORA_ALPHA", "LORA_TARGET_MODULES"):
                 env.pop(key, None)
             subprocess.run(["bash", str(ROOT / "examples/chess_opd/run_train.sh")],
@@ -68,6 +69,9 @@ else:
                 config = compose(config_name="ppo_trainer", overrides=overrides)
                 resolved = OmegaConf.to_container(config, resolve=True)
             self.assertEqual(resolved["trainer"]["total_epochs"], 1)
+            self.assertEqual(resolved["trainer"]["logger"], ["console", "wandb"])
+            self.assertEqual(resolved["trainer"]["project_name"], "chess_opd_test")
+            self.assertEqual(resolved["trainer"]["experiment_name"], "lora_logging_test")
             self.assertTrue(resolved["trainer"]["use_v1"])
             self.assertEqual(resolved["trainer"]["n_gpus_per_node"], 1)
             self.assertEqual(resolved["distillation"]["n_gpus_per_node"], 1)

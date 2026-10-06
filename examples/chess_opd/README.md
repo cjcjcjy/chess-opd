@@ -193,7 +193,19 @@ python -m examples.chess_opd.check_lora_environment
 
 官方 checkpoint 位于 `OUTPUT_DIR/global_step_N`。相同配置、数据和输出目录下再次运行时，官方 `trainer.resume_mode=auto` 恢复；显式路径可加 `trainer.resume_mode=resume_path trainer.resume_from_path=/absolute/path/global_step_N`。默认输出目录为 `runs/official_opd_100k_teacher_reasoning_lora8`，避免自动恢复旧的全参数训练；切换 rank、alpha 或 target modules 时也应使用新目录。不要加载历史手写版 checkpoint。
 
-默认只记录 console，`SAVE_FREQ=250`，`TEST_FREQ=-1` 关闭周期验证；设置 `TEST_FREQ=250` 可启用官方验证。关注官方 distillation loss、生成长度、截断和留出集指标，不能单凭 KL 下降断言学生进步。
+默认同时记录 console 和 **Weights & Biases**，通过官方 verl logger 上传训练配置和每步指标。首次在线运行前，在训练环境执行 `wandb login`。默认项目为 `chess_opd`，运行名包含模型和 LoRA rank；可设置 `PROJECT_NAME` / `EXPERIMENT_NAME`，也支持 `WANDB_PROJECT` / `WANDB_NAME`（前两者优先）。`WANDB_ENTITY` 可指定账号或团队。
+
+```bash
+wandb login
+PROJECT_NAME=chess_opd EXPERIMENT_NAME=qwen3_4b_lora8_opd \
+  bash examples/chess_opd/run_train.sh
+```
+
+后台训练仍使用上面的 `nohup` 命令，W&B 会自动启用。本地 W&B 文件默认写入 `logs/wandb/`（`WANDB_DIR` 可修改父目录）。不联网时设置 `WANDB_MODE=offline`，之后可用 `wandb sync logs/wandb/offline-run-*` 上传；仅保留终端日志可在命令末尾加 `'trainer.logger=[console]'`。
+
+断点恢复训练默认创建新的 W&B run；若需要接续原在线 run，显式设置相同的 `WANDB_RUN_ID` 和 `WANDB_RESUME=allow`，并恢复对应 checkpoint。
+
+`SAVE_FREQ=250`，`TEST_FREQ=-1` 关闭周期验证；设置 `TEST_FREQ=250` 可启用官方验证及其 W&B 指标。关注官方 distillation loss、学习率、梯度范数、生成长度、截断、耗时和留出集指标，不能单凭 KL 下降断言学生进步。W&B 记录以官方 trainer 实际输出的指标为准。
 
 ## 导出与棋类评估
 

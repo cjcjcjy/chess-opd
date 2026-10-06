@@ -1,5 +1,17 @@
 # Official verl migration validation — 2026-10-05
 
+## W&B logging — 2026-10-06
+
+The launcher now enables both console and W&B through the official logger.
+Project/run names are configurable; W&B defaults to online mode with local files
+under `logs/wandb`. `WANDB_MODE=offline` supports recording without credentials.
+
+The official-launcher Hydra configuration check passed, including both loggers
+and custom project/run names. The actual upstream `Tracking` class was exercised
+with W&B 0.20.1 in offline mode: a test scalar was logged, the run was finished,
+and its value was verified in the persisted `.wandb` history records. No online
+test run or training run was created. Shell syntax and whitespace checks passed.
+
 ## LoRA defaults and AutoAWQ import repair
 
 The student launcher now defaults to the official FSDP LoRA path: rank 8,

@@ -40,7 +40,10 @@ export DISTILLATION_LOSS_MODE=${DISTILLATION_LOSS_MODE:-k1}
 export USE_POLICY_GRADIENT=${USE_POLICY_GRADIENT:-True}
 # Use the active Python environment; locked environment management is opt-in.
 export VERL_USE_UV=${VERL_USE_UV:-0}
-export PROJECT_NAME=chess_opd EXPERIMENT_NAME=${EXPERIMENT_NAME:-qwen3_4b_nothink_from_8b_think_100k_lora${LORA_RANK}}
+export PROJECT_NAME=${PROJECT_NAME:-${WANDB_PROJECT:-chess_opd}}
+export EXPERIMENT_NAME=${EXPERIMENT_NAME:-${WANDB_NAME:-qwen3_4b_nothink_from_8b_think_100k_lora${LORA_RANK}}}
+export WANDB_MODE=${WANDB_MODE:-online}
+export WANDB_DIR=$(realpath -m "${WANDB_DIR:-$ROOT/logs}")
 if [[ $(git -C "$VERL_DIR" rev-parse HEAD) != "$(cat "$ROOT/VERL_REVISION")" ]]; then
   echo "Run scripts/setup_verl.sh; official verl revision mismatch." >&2
   exit 1
@@ -70,7 +73,7 @@ LAUNCH=(bash examples/on_policy_distillation_trainer/run_qwen3_8b_fsdp.sh
   "distillation.teacher_models.teacher_model.inference.max_model_len=$((MAX_TEACHER_PROMPT_LENGTH + TEACHER_THINK_MAX_TOKENS + MAX_RESPONSE_LENGTH + 2))"
   "reward.custom_reward_function.path=$ROOT/examples/chess_opd/reward.py"
   reward.custom_reward_function.name=compute_score
-  'trainer.logger=[console]'
+  'trainer.logger=[console,wandb]'
   "trainer.default_local_dir=$OUTPUT_DIR"
 )
 if [[ ${1:-} == --dry-run ]]; then
@@ -90,4 +93,5 @@ if [[ ${RUN_PREFLIGHT:-0} == 1 ]]; then
     --batch-size "$TRAIN_BATCH_SIZE" --mini-batch-size "$PPO_MINI_BATCH_SIZE" \
     --max-prompt "$MAX_PROMPT_LENGTH" --max-teacher-prompt "$MAX_TEACHER_PROMPT_LENGTH"
 fi
+mkdir -p "$WANDB_DIR"
 exec "${LAUNCH[@]}" "$@"
